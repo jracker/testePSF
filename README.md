@@ -1,2 +1,2 @@
 # testePSF
-Aplicação do algoritmo Pattern Sequence based Forecasting (PSF) para a bacia hidrográfica do posto ONS de código 7464
+O objetivo do `testePSF` é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
