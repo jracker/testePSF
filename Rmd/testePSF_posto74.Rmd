@@ -1,0 +1,33 @@
+---
+title: "Aplicação do algoritmo PSF em séries hidrológicas"
+author: "Jerônimo Acker D'Ornellas"
+date: "08/04/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = "",
+  prompt = FALSE,
+  collapse = TRUE,
+  include = TRUE
+)
+
+# Adicionar pacotes necessários 
+pacotes <- c(
+  "HEobs",
+  "PSF"
+)
+# Carrega os pacotes
+easypackages::libraries(pacotes)
+```
+
+## Objetivo 
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+
+## Aplicação do algoritmo PSF
+
