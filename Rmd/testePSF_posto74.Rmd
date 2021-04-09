@@ -9,19 +9,20 @@ output: html_document
 ```{r setup, include=FALSE}
 rm(list = ls())
 knitr::opts_chunk$set(
-  echo = TRUE,
-  comment = "",
-  prompt = FALSE,
-  collapse = TRUE,
-  include = TRUE
+  echo = FALSE
 )
 
 # Adicionar pacotes necessários 
 pacotes <- c(
   "HEobs",
-  "PSF"
+  "PSF",
+  #"fuse.prep",
+  #"HEgis",
+  #"lhmetools",
+  "tidyverse",
+  "lubridate"
 )
-# Carrega os pacotes
+# Carregar os pacotes
 easypackages::libraries(pacotes)
 ```
 
@@ -29,5 +30,69 @@ easypackages::libraries(pacotes)
 
 O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
 
-## Aplicação do algoritmo PSF
+### Dados de entrada
+
+```{r}
+# Link dos dados de vazões naturais
+dropbox_link <- paste0('https://www.dropbox.com/s/d40adhw66uwueet/',
+                       'VazoesNaturaisONS_D_87UHEsDirceuAssis_2018.dat?dl=1')
+# Retorna nome do arquivo que irá ser salvo 
+dest_file <- dropbox_link %>% 
+  fs::path_ext_remove() %>% 
+  fs::path_file()
+# Fazer o download do arquivo
+download.file(url = dropbox_link, 
+              destfile = dest_file,  
+              mode = "wb")
+
+# Importar os dados
+qnat_file <- import_qnat(file = dest_file,
+                    complete = TRUE,
+                    add_stn_info = TRUE)
+```
+
+### Pré-processamento dos dados para entrada no algoritmo PSF
+
+Filtragem para o período de dados válidos do posto 74 da ONS (G. B. Munhoz).
+
+```{r}
+# Seleciona as informações de interesse
+qnat_posto <- qnat_file %>% 
+  dplyr::filter(code_stn == 74) %>% 
+  dplyr::select(date, posto = code_stn, qnat)
+
+# período  dados válidos
+se_date <- qnat_posto %>% 
+  dplyr::filter(!is.na(qnat)) %>% 
+  dplyr::summarise(
+    start = min(date),
+    end = max(date),
+  )
+
+# Filtrar dados para os períodos válidos e fazer a média dos dados diários
+qnat_posto74 <- qnat_posto %>% 
+  dplyr::filter(date >= se_date[[1]] & date <= se_date[[2]]) %>% 
+  select(date,qnat) %>% 
+  group_by(date = floor_date(date, "month")) %>% 
+  summarise(qnat = mean(qnat, na.rm = TRUE))
+
+# class(qnat_posto74)
+```
+
+
+### Aplicação do algoritmo PSF
+
+```{r}
+# Dados de vazão natural a partir de 1969
+qnat_posto74<- qnat_posto74[10:length(qnat_posto74$qnat),]
+# Treinamento
+modelo_munhoz = psf(qnat_posto74, cycle = 12) 
+# Predição dos últimos 12 meses 
+(pred_munhoz = predict(modelo_munhoz, n.ahead = 12))
+(obs <- qnat_posto74$qnat[580:591]) # Valores de vazão dos últimos 12 meses
+
+#plot(modelo_munhoz,pred_munhoz)
+```
+## Comparação com outros métodos 
+
 
