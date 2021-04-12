@@ -1,0 +1,217 @@
+---
+title: "Aplicação do algoritmo PSF a séries de vazão naturalizada"
+author: "Jerônimo Acker D'Ornellas"
+date: "08/04/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+#rm(list = ls())
+knitr::opts_chunk$set(
+  #echo = FALSE,
+  comment = "#>",
+  collapse = TRUE
+)
+```
+
+## Objetivo 
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+> Note que eu usei a versão do PSF no github, que pode ser diferente da na CRAN. Faça a comparação dos resultados e veja se eles são consistentes.
+
+```{r, message=FALSE}
+if(!require(PSF)) remotes::install_github("neerajdhanraj/PSF")
+
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+
+### Dados de vazão
+
+Os dados importados de vazão devem ser regularmente espaçados no tempo. Esta adequação das séries diárias, se necessária, pode ser realizada com a função `complete_dates()` do pacote **`{lhmetools}`**. Assim assegura-se que todas estações possuam 1 observação por dia e sem datas faltantes.
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+```
+
+Os dados importados precisam filtrados para o posto de interesse: posto 74 da ONS (G. B. Munhoz).
+
+```{r}
+posto <- 74
+qnat_posto <- qnat_data %>% 
+  dplyr::filter(code_stn == posto)
+glimpse(qnat_posto)
+```
+
+
+Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com mais pelo menos 28 observações válidas e anos completos.
+
+```{r}
+# Seleciona observações com pelo menos 28 observações válidas no mês
+qnat_posto_mly <- qnat_posto %>% 
+  dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
+  dplyr::summarise(
+    qnat_obs = mean_wise(qnat), 
+    valid = nvalid(qnat), 
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(valid >= 28) 
+
+# check
+#str(qnat_posto_mly)
+# qnat_posto_mly %>% 
+#   lhmetools::complete_dates(group = "code_stn", time_step = # "month") %>%
+#   str()
+
+# Anos completos
+anos_comp <- qnat_posto_mly %>%
+  group_by(ano = lubridate::year(date)) %>%
+  tally() %>%
+  filter(n == 12) %>%
+  pull(ano) 
+
+# Usa apenas as observações dos anos completos
+qnat_posto_mly <- qnat_posto_mly %>%
+  filter(lubridate::year(date) %in% anos_comp)
+
+# check
+#qnat_posto_mly %>%
+#  filter(valid != N)
+
+# Seleciona apenas a data e as observações de vazão 
+qnat_posto_mly <- qnat_posto_mly %>%
+  select(date, qnat_obs)
+
+# check
+head(qnat_posto_mly)
+tail(qnat_posto_mly)
+nrow(qnat_posto_mly) %% 12 
+nrow(qnat_posto_mly) %/% 12
+```
+
+
+### Aplicação do algoritmo PSF
+
+```{r}
+#PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
+
+# Retirar observações dos dois últimos anos: 2017 e 2018
+(leave_out <- tail(anos_comp, n = 2))
+data_train <- qnat_posto_mly %>%
+  filter(!lubridate::year(date) %in% leave_out)
+
+# Treinamento do modelo
+modelo_munhoz <- psf(
+  data_train[["qnat_obs"]],
+  #n.ahead = 12 * length(leave_out),
+  #k = 2:20,
+  k = 3:20,
+  w = 1:10,
+  cycle = 12
+)
+
+# Realiza a previsão de vazão nos dois últimos meses (2017 e 2018)
+pred_munhoz <- predict(modelo_munhoz,
+                       n.ahead = 12 * length(leave_out))
+
+# Comparação dos valores observados e previstos para os dois últimos anos
+plot(
+  modelo_munhoz,
+  pred_munhoz
+  )
+```
+
+
+
+Adicionando previsões aos dados originais para previsão.
+
+```{r}
+inds <- (nrow(data_train) + 1):(nrow(data_train) + (12 * length(leave_out)))
+nrow(qnat_posto_mly) == max(inds)
+
+qnat_posto_mly_pred <- mutate(qnat_posto_mly,
+  qnat_pred = NA,
+  qnat_pred = replace(qnat_pred,
+    list = inds,
+    values = pred_munhoz
+  )
+)
+tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
+```
+
+
+> Adicionar coluna com a previsão baseada na climatologia.
+
+```{r}
+df <- qnat_posto_mly_pred[inds,]
+df_ts <- xts(df[,-1], order.by = as.Date(df[["date"]]))
+forecast::autoplot(df_ts, facets = FALSE)
+```
+
+
+## Avaliação
+
+```{r}
+# seleciona apenas alguns índices
+pos_stat_inds <- c(1:2, 4:6, 9, 17, 19:20) 
+hydroGOF::gof(
+  sim = df_ts$qnat_pred, 
+  obs = df_ts$qnat_obs)[pos_stat_inds,]
+```
+
+Podemos avaliar a média do RMSE após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF ao alterar, por exemplo, parâmetros como `k` e `w`.
+
+
+```{r}
+metricas <- NULL
+
+for(i in 1:10)
+{
+  set.seed(i)
+  # PSF
+  psf_model <- psf(data_train[["qnat_obs"]],
+                   k = 3:20,
+                   w = 1:10,
+                   cycle = 12)
+  preds <- predict(psf_model, 
+                   n.ahead = 12 * length(leave_out))
+  # Erro do PSF
+  metricas[i] <-  sqrt(mean((df_ts$qnat_obs- preds)^2))
+}
+
+
+rmse_psf <- mean(metricas)
+```
+
+
