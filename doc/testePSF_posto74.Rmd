@@ -23,7 +23,6 @@ O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hid
 
 Pacotes necessários:
 
-> Note que eu usei a versão do PSF no github, que pode ser diferente da na CRAN. Faça a comparação dos resultados e veja se eles são consistentes.
 
 ```{r, message=FALSE}
 if(!require(PSF)) remotes::install_github("neerajdhanraj/PSF")
