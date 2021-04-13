@@ -1,2 +1,2 @@
 # testePSF
-O objetivo do `testePSF` é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+O objetivo deste repositório é avaliar o algoritmo de previsão baseado em sequência de padrão ([PSF](https://cran.r-project.org/web/packages/PSF/index.html)) na sua aplicação a séries temporais de vazão naturalizada dos postos da ONS. A idéia é comparar seu desempenho com outras técnicas univariadas de previsão de séries temporais.
