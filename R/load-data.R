@@ -8,7 +8,7 @@ qnat_dly_ons <- function() {
   }
   
   # Link dos dados de vazões naturais
-  dropbox_link <- paste0('https://www.dropbox.com/s/d40adhw66uwueet/',
+  dropbox_link <- file.path('https://www.dropbox.com/s/d40adhw66uwueet/',
                 'VazoesNaturaisONS_D_87UHEsDirceuAssis_2018.dat?dl=1')
   # Retorna nome do arquivo que irá ser salvo
   tmp_file <- fs::file_temp()
