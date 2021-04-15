@@ -38,7 +38,10 @@ pacotes <- c(
   "fs",
   "checkmate",
   "xts",
-  "hydroGOF"
+  "hydroGOF",
+  "decomposedPSF",
+  "ForecastTB",
+  "ModelMetrics"
 )
 # Carregar os pacotes
 easypackages::libraries(pacotes)
@@ -131,6 +134,7 @@ data_train <- qnat_posto_mly %>%
   filter(!lubridate::year(date) %in% leave_out)
 
 # Treinamento do modelo
+set.seed(2)
 modelo_munhoz <- psf(
   data_train[["qnat_obs"]],
   #n.ahead = 12 * length(leave_out),
@@ -170,7 +174,6 @@ tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
 ```
 
 
-> Adicionar coluna com a previsão baseada na climatologia.
 
 ```{r}
 df <- qnat_posto_mly_pred[inds,]
@@ -183,20 +186,23 @@ forecast::autoplot(df_ts, facets = FALSE)
 
 ```{r}
 # seleciona apenas alguns índices
+# ctrl+alt+c
 pos_stat_inds <- c(1:2, 4:6, 9, 17, 19:20) 
 hydroGOF::gof(
   sim = df_ts$qnat_pred, 
   obs = df_ts$qnat_obs)[pos_stat_inds,]
 ```
 
-Podemos avaliar a média do RMSE após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF ao alterar, por exemplo, parâmetros como `k` e `w`.
+Podemos avaliar a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF ao alterar, por exemplo, parâmetros como `k` e `w`.
 
 
 ```{r}
-metricas <- NULL
+obs_74 <- qnat_posto_mly_pred[inds,]$qnat_obs
+metricas74 <- NULL
 
 for(i in 1:10)
 {
+  # i = 1
   set.seed(i)
   # PSF
   psf_model <- psf(data_train[["qnat_obs"]],
@@ -206,11 +212,190 @@ for(i in 1:10)
   preds <- predict(psf_model, 
                    n.ahead = 12 * length(leave_out))
   # Erro do PSF
-  metricas[i] <-  sqrt(mean((df_ts$qnat_obs- preds)^2))
+ # metricasx[i] <-  sqrt(mean((df_ts$qnat_obs- preds)^2))
+  metricas74[i] <- KGE(sim = preds,
+                       obs = obs_74)
 }
 
 
-rmse_psf <- mean(metricas)
+(KGE_psf <- mean(metricas74))
 ```
+
+
+
+## Aplicação do PSF a outros postos da ONS
+
+
+
+```{r func_aux, echo = FALSE}
+
+# Funções auxiliares
+
+get_cyears <- function(df){
+  cyrs <- df %>% 
+    group_by(ano = lubridate::year(date)) %>% 
+    tally() %>% 
+    filter(n == 12) %>% 
+    pull(ano)
+  return(cyrs)
+}
+
+
+apply_cyears  <- function(df){
+   cyrs <- get_cyears(df)
+   df_cyrs <- df %>% 
+     filter(lubridate::year(date) %in% cyrs)
+   return(df_cyrs)
+}
+
+
+train_data <- function(df){
+  cyrs <- get_cyears(df)
+  leave_out <- tail(cyrs,n = 2) # retira 2 últ. anos por padrão
+  data <- df %>% 
+    filter(!lubridate::year(date) %in% leave_out)
+  return(data)
+}
+
+
+test_data <- function(df){
+  nahead = 24
+  inds <- (nrow(df) - nahead -1):(nrow(df))
+  df <- df[inds,2]
+}
+
+psf_model <- function(df){
+  #set.seed(2)
+  model <- psf(df[,"qnat_obs"],cycle = 12) # seleciona a coluna qnat_obs
+  preds <- predict(model,n.ahead = 24)
+  return(preds)
+}
+```
+
+
+```{r}
+# Média mensal das observações de vazão para todos os postos
+qnat_mly <- qnat_data %>% 
+  dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
+  dplyr::summarise(
+    qnat_obs = mean_wise(qnat), 
+    valid = nvalid(qnat), 
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(valid >= 28)
+
+
+
+# Análise
+
+#lapply(by_code$data, '[[', 'date') como acessar coluna dentro da lista de df's
+
+
+# Seleciona apenas data, código do posto e obs de vazão nat.
+qnat_mly <- qnat_mly %>%
+  select(date,code_stn,qnat_obs)
+
+# Agrupa df pelo código do posto 
+by_code <- qnat_mly %>% 
+  group_by(code_stn) %>% 
+  nest()
+
+
+# Postos com ano completos (testado ok!) 
+bycd_cyrs <- by_code %>% 
+  mutate(data = map(data,apply_cyears))
+
+# Dados de treinamento (sem últimos dois anos)
+train_data <- bycd_cyrs  %>% 
+  mutate(data = map(data, train_data))
+
+
+# Dados para avaliação do PSF 
+tst_data <- by_code %>% 
+  mutate(obs = map(data,test_data)) %>% 
+  unnest(.,obs) %>% 
+  select(code_stn,qnat_obs)
+
+
+
+# Selecionar qnat_obs --> train_data$data[[i]][:,2] (i = cód posto)
+
+preds_model <- train_data %>% 
+  mutate(preds = map(data, psf_model))
+
+
+# Predições e code_stn
+preds <- preds_model[-2] %>% 
+  unnest(.,preds) 
+  
+
+# Avaliação do PSf   
+
+#pos_stat_inds <- c(6, 9, 17, 19) 
+
+preds_obs <- preds %>% 
+  ungroup() %>% 
+  mutate(qnat_obs = NA,
+         qnat_obs = replace(qnat_obs,
+                            values = tst_data$qnat_obs)
+         ) #%>% 
+  #$group_by(code_stn) 
+
+print(preds_obs)
+
+metricas <- preds_obs %>% 
+  group_by(code_stn) %>%
+  summarise(KGE = KGE(sim = preds, obs = qnat_obs),
+            PBIAS = pbias(sim = preds, obs = qnat_obs),
+            nse = NSE(sim = preds, obs = qnat_obs),
+            #RMSE = ModelMetrics::rmse(actual = qnat_obs,
+                                      #predicted = preds)
+            NRMSE = nrmse(sim = preds, obs = qnat_obs)
+            ) %>% 
+  arrange(-KGE)
+
+(metricas)
+```
+
+
+
+
+
+
+## Comparação com outros métodos
+
+
+```{r}
+library(tsbox)
+# TS
+df_comp <- xts(data_train[,2], order.by = as.Date(data_train[["date"]]))
+# xts to time series
+ts_dfcomp <- ts_ts(df_comp)
+
+
+# Função para testar o método LPSF
+test1 <- function(data, nval){
+  return(lpsf(data = data, n.ahead = nval))
+}
+# Função para testar o método PSF
+test2 <- function(data, nval){
+  a <- psf(data = data, cycle = 12)
+  b <- predict(object = a, n.ahead = nval)
+  return(b)
+  }
+
+a1 <- prediction_errors(data = ts_dfcomp, 
+                        nval = 12*length(leave_out),
+                        Method = c("test1(data, nval)", "test2(data, nval)"),
+                        MethodName = c("LPSF","PSF"),
+                        append_ = 1)
+
+b1 <- plot(a1)
+
+```
+
+
+
 
 
