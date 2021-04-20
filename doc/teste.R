@@ -283,7 +283,8 @@ qnat_postos <- qnat_data %>%
                 code_stn == 287|
                 code_stn == 145|
                 code_stn == 281|
-                code_stn == 278) %>% 
+                code_stn == 278|
+                code_stn == 291) %>% 
   apply_cmonth(.) %>% 
   group_by(code_stn) %>%
   nest() %>% 
@@ -332,20 +333,35 @@ pred_data <- ensemble_postos %>%
 #                     w = 3,
 #                     cycle = 12)
 # pred_teste <- predict(modelo_teste, n.ahead = 24)
-# ```
+
   
-aval_preds <- pred_data %>% 
+pobs_postos <- pred_data %>%  # predições e observações 
   inner_join(.,
              test_data,
              by = "code_stn") %>% 
   select(test_data,mean_preds,pred_mpar) %>% 
-  unnest() %>% 
+  unnest() 
+
+
+
+aval_postos <-  pobs_postos %>%  
   summarise(KGE_mpreds = KGE(sim = mean_preds , obs = qnat_obs),
             KGE_predmpar = KGE(sim = pred_mpar, obs = qnat_obs)
   ) %>% 
   arrange(-KGE_mpreds)
   
 
+# Gráfico 
+posto287 <- pobs_postos %>% 
+  filter(code_stn == "287") %>% 
+  select(date,qnat_obs,pred_mpar)# melhor KGE usando pred_mpar
 
+posto287_ts <- xts(posto287[,3:4], 
+                   order.by = as.Date(posto287[["date"]]))
+forecast::autoplot(posto287_ts, facets = FALSE)
+
+
+
+  
 
 
