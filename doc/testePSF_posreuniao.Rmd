@@ -1,0 +1,370 @@
+---
+title: "Aplicação do algoritmo PSF a séries de vazão naturalizada"
+author: "Jerônimo Acker D'Ornellas"
+date: "08/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#rm(list = ls())
+knitr::opts_chunk$set(
+  #echo = FALSE,
+  comment = "#>",
+  collapse = TRUE
+)
+```
+
+## Objetivo
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+
+```{r, message=FALSE}
+if(!require(PSF)) remotes::install_github("neerajdhanraj/PSF")
+
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF",
+  "decomposedPSF",
+  "ForecastTB",
+  "ModelMetrics"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+Dados
+
+```{r}
+# Carrega dados-----------------------------------------------------
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+# View(qnat_data)
+```
+
+
+
+## Verificação reprodutibilidade do PSF
+
+
+Treinamento do modelo e as predições usando do dataset `sunspot`.
+
+```{r}
+# Dados de treinamento
+train <- sunspots[1:2772]
+
+
+# Test Data
+teste <- sunspots[2773:2820]
+
+# Retorna as predições do modelo 
+psf_model <- function(train_data){
+  model <- psf(train_data, cycle = 12)
+  preds <- predict(model, n.ahead = 48)
+  return(preds)
+}
+
+n = 5 # número de iterações
+dif_seeds <- list() # resultados das predições usando seeds diferentes
+same_seed <- list()  # resultados das predições usando mesmos seeds
+
+for(i in 1:n){
+  set.seed(i)
+  dif_seeds[[i]] <- psf_model(treino)
+}
+  
+for(i in 1:n){
+  set.seed(123)
+  same_seed[[i]] <- psf_model(train)
+}
+
+# As predições entre as listas são as mesmas?
+(match(dif_seeds,same_seed))
+
+# As predições da lista com o mesmo seed é igual?
+(length(unique(same_seed)) == 1) 
+```
+```{r}
+PSF <- NULL
+ARIMA <- NULL
+ETS <- NULL
+
+for(i in 1:5)
+{
+  set.seed(i)
+  
+  # for PSF
+  psf_model <- psf(train,cycle = 12)
+  a <- predict(psf_model, n.ahead = 48)
+
+  # for ARIMA
+  b <- forecast(auto.arima(train), 48)$mean
+  
+  # for ets
+  c <- as.numeric(forecast(ets(train), 48)$mean)
+  
+  ## For Error Calculations
+  # Error for PSF
+  PSF[i] <- sqrt(mean((teste - a)^2))
+  # Error for ARIMA
+  ARIMA[i] <- sqrt(mean((teste - b)^2))
+  # Error for ETS
+  ETS[i] <- sqrt(mean((teste - c)^2))
+
+}
+```
+
+
+
+## Normalização dos dados no PSF
+
+```{r}
+data_norm <- (sunspots - min(sunspots))/(max(sunspots) - min(sunspots))
+```
+
+
+
+
+## ENSEMBLE PSF
+
+Funções auxiliares
+
+```{r funções auxiliares}
+sel_posto <- function(df,posto){
+  # Função para selecionar um posto específico via código
+  df %>% 
+    dplyr::filter(code_stn == posto) 
+}
+
+apply_cmonth <- function(df){
+  # Função para filtrar os meses completos dos dados 
+  df <- df %>% 
+    dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
+    dplyr::summarise(
+      qnat_obs = mean_wise(qnat), 
+      valid = nvalid(qnat), 
+      N = n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::filter(valid >= 28) %>% 
+    select(date,code_stn,qnat_obs)
+  return(df)
+}
+
+get_cyears <- function(df){
+  # Função para pegar os anos completos dos dados
+  cyrs <- df %>% 
+    group_by(ano = lubridate::year(date)) %>% 
+    tally() %>% 
+    filter(n == 12) %>% 
+    pull(ano)
+  return(cyrs)
+}
+
+apply_cyears  <- function(df){
+  # Função para filtrar os dados com anos completos
+  # Usar depois de agrupar os dados
+  cyrs <- get_cyears(df)
+  df_cyrs <- df %>% 
+    filter(lubridate::year(date) %in% cyrs)
+  return(df_cyrs)
+}
+
+
+get_traindt <- function(df){
+  # Função para pegar os dados de treinamento
+  # Padrão: 2 últimos anos de observações são removidos
+  cyrs <- get_cyears(df)
+  leave_out <- tail(cyrs,n = 2) # retira 2 últ. anos por padrão
+  data <- df %>% 
+    filter(!lubridate::year(date) %in% leave_out)
+  return(data)
+}
+
+
+get_testdt <- function(df){
+  # Função para pegar os dados de teste
+  # Padrão: 2 últimos anos de observações são usados como teste
+  nahead = 24
+  inds <- (nrow(df) - nahead + 1):(nrow(df))
+  df <- df[inds,] %>% 
+    select(date,qnat_obs)
+    #df[inds,"qnat_obs"] # df[inds,2]
+}
+
+psf_model <- function(df){
+  # Função para aplicar o psf, retorna as predições do modelo
+  # set.seed(1) #p/ reprodutibilidade
+  model <- psf(df[,"qnat_obs"],cycle = 12) #df[,2]
+  preds <- predict(model,n.ahead = 24)
+  return(preds)
+}
+
+
+ensemble_preds <- function(df){
+  # Retorna uma lista com as predições do psf com difs seeds
+  list_preds <- list()
+  # list_model <- list()
+  for(i in 1:5){
+    set.seed(i)
+    list_preds[[i]] <- psf_model(df)
+  }
+  return(list_preds)
+}
+
+
+
+ensemble_models <- function(df){
+  # Retorna uma lista com os modelos do psf com difs seeds
+  list_model <- list()
+  for(i in 1:5){
+    set.seed(i)
+    model <- psf(df[,"qnat_obs"],cycle = 12)
+    list_model[[i]] <- model
+  }
+  return(list_model)
+  
+}
+
+ensemble_mpar <- function(df,params){
+  # Retorna predições feitas com os valores médios de k e w
+  # extraídos usando a função get_mpar
+  set.seed(1)
+  model <- psf(df[,"qnat_obs"],
+               k = params[[1]][[1]],
+               w = params[[1]][[2]],
+               cycle = 12)
+  pred <- predict(model,n.ahead = 24)
+  return(pred)
+}
+
+get_mpar <- function(modelo){
+  # Média dos parâmetros k e w dos modelos
+  list_k <- list()
+  list_w <- list()
+  teste <- for(i in 1:5){
+    list_k[[i]] <- modelo[[i]]$k
+    list_w[[i]] <- modelo[[i]]$w
+  }
+  # Usar apenas números inteiros no modelo
+  k_mean <-  round(Reduce("+",list_k)/length(list_k),0)
+  w_mean <- round(Reduce("+",list_w)/length(list_w),0)
+  list_param <- list()
+  list_param[[1]] <- c(k_mean,w_mean)
+}
+
+
+get_mpred <- function(lista){
+  # Faz a média das predições dos modelos das 5 iterações
+  pred_mean <- list(
+    rowMeans(as.data.frame(lista))
+  )
+}
+```
+
+
+```{r Aplicação PSF em todos os potos}
+qnat_all <- qnat_data %>%
+  apply_cmonth(.) %>% 
+  group_by(code_stn) %>%
+  nest() %>% 
+  mutate(
+    data = map(data, apply_cyears)
+  )
+
+# Inclui os dois últimos anos de qnat_obs para cada estação
+test_data_all <- qnat_all %>% 
+  mutate(
+    test_data = map(data,get_testdt)
+  ) %>% 
+  select(code_stn,test_data)
+
+# Inclui as observações de qnat_obs com exceção dos dois últimos anos 
+train_data_all <- qnat_all %>% 
+  mutate(
+    train_data = map(data,get_traindt)
+  )%>% 
+  select(code_stn,train_data)
+
+# Modelos e predições resultantes de 5 iterações para cada posto
+start_time <- Sys.time()
+ensemble_postos_all <- train_data_all %>% 
+  mutate(
+    models = map(train_data,ensemble_models),
+    preds = map(train_data,ensemble_preds)
+  )
+end_time <- Sys.time() # Demorou 8.775542 mins
+
+#saveRDS(ensemble_postos_all, file = here('doc', 'ensemble_all.rds'))
+#ensemble_postos_all <- readRDS(here('doc', 'ensemble_all.rds'))
+
+# unlist(teste,recursive=FALSE) --> tira um level da lista
+
+# Adiciona os parâmetros médios k e w, predições médias (5 iterações) e 
+# predições usando k e w médios
+pred_data_all <- ensemble_postos_all %>% 
+  mutate(
+    model_params = map(models,get_mpar), # parâmetros k e w médios
+    mean_preds = unlist(map(preds,get_mpred),
+                        recursive = FALSE), # predições médias das iter
+    pred_mpar = map(train_data, # predições usando k e w médios
+                    ~ensemble_mpar(.x,model_params))
+  )
+
+
+
+# Seleciona observações, predições médias e predições usando k e w médios
+pobs_postos_all <- pred_data_all %>%  
+  inner_join(.,
+             test_data_all,
+             by = "code_stn") %>% 
+  select(test_data,mean_preds,pred_mpar) %>% 
+  unnest() 
+
+
+
+aval_postos_all <-  pobs_postos_all %>%  
+  summarise(KGE_mpreds = KGE(sim = mean_preds , obs = qnat_obs),
+            KGE_predmpar = KGE(sim = pred_mpar, obs = qnat_obs),
+            PBIAS = pbias(sim = mean_preds, obs = qnat_obs),
+            NRMSE = nrmse(sim = mean_preds, obs = qnat_obs),
+            NSE = NSE(sim = mean_preds, obs = qnat_obs),
+  ) %>% 
+  arrange(-KGE_mpreds)
+
+
+
+# Gráfico 
+posto287 <- pobs_postos_all %>% 
+  filter(code_stn == "287") %>% 
+  select(date,qnat_obs,pred_mpar)# melhor KGE usando pred_mpar
+
+posto287_ts <- xts(posto287[,3:4], 
+                   order.by = as.Date(posto287[["date"]]))
+forecast::autoplot(posto287_ts, facets = FALSE)
+```
+
+
+

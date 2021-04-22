@@ -276,7 +276,6 @@ metricas <- aval_metricas %>%
 
 # Teste do ensemble para 5 postos ----------------------------------
 
-
 # Seleciona postos específicos e extrai os dados válidos
 qnat_postos <- qnat_data %>%
   dplyr::filter(code_stn == 74|
@@ -292,8 +291,6 @@ qnat_postos <- qnat_data %>%
     data = map(data, apply_cyears)
   )
   
-
-
 # Inclui os dois últimos anos de qnat_obs para cada estação
 test_data <- qnat_postos %>% 
   mutate(
@@ -311,12 +308,14 @@ train_data <- qnat_postos %>%
 # Modelos e predições resultantes de 5 iterações para cada posto
 ensemble_postos <- train_data %>% 
   mutate(
-    models = map(train_data,ensemble_model),
+    models = map(train_data,ensemble_models),
     preds = map(train_data,ensemble_preds)
   )
 
 # unlist(teste,recursive=FALSE) --> tira um level da lista
 
+# Adiciona os parâmetros médios k e w, predições médias (5 iterações) e 
+# predições usando k e w médios
 pred_data <- ensemble_postos %>% 
   mutate(
     model_params = map(models,get_mpar), # parâmetros k e w médios
@@ -334,7 +333,7 @@ pred_data <- ensemble_postos %>%
 #                     cycle = 12)
 # pred_teste <- predict(modelo_teste, n.ahead = 24)
 
-  
+# Seleciona observações, predições médias e predições usando k e w médios   
 pobs_postos <- pred_data %>%  # predições e observações 
   inner_join(.,
              test_data,
@@ -362,6 +361,126 @@ forecast::autoplot(posto287_ts, facets = FALSE)
 
 
 
-  
+
+# Teste ensemble para todos os postos -------------------
+qnat_all <- qnat_data %>%
+  apply_cmonth(.) %>% 
+  group_by(code_stn) %>%
+  nest() %>% 
+  mutate(
+    data = map(data, apply_cyears)
+  )
+
+# Inclui os dois últimos anos de qnat_obs para cada estação
+test_data_all <- qnat_all %>% 
+  mutate(
+    test_data = map(data,get_testdt)
+  ) %>% 
+  select(code_stn,test_data)
+
+# Inclui as observações de qnat_obs com exceção dos dois últimos anos 
+train_data_all <- qnat_all %>% 
+  mutate(
+    train_data = map(data,get_traindt)
+  )%>% 
+  select(code_stn,train_data)
+
+# Modelos e predições resultantes de 5 iterações para cada posto
+start_time <- Sys.time()
+ensemble_postos_all <- train_data_all %>% 
+  mutate(
+    models = map(train_data,ensemble_models),
+    preds = map(train_data,ensemble_preds)
+  )
+end_time <- Sys.time() # Demorou 8.775542 mins
+
+#saveRDS(ensemble_postos_all, file = here('doc', 'ensemble_all.rds'))
+#load_ensall <- readRDS(here('doc', 'ensemble_all.rds'))
+
+# unlist(teste,recursive=FALSE) --> tira um level da lista
+
+# Adiciona os parâmetros médios k e w, predições médias (5 iterações) e 
+# predições usando k e w médios
+pred_data_all <- ensemble_postos_all %>% 
+  mutate(
+    model_params = map(models,get_mpar), # parâmetros k e w médios
+    mean_preds = unlist(map(preds,get_mpred),
+                        recursive = FALSE), # predições médias das iter
+    pred_mpar = map(train_data, # predições usando k e w médios
+                    ~ensemble_mpar(.x,model_params))
+  )
+
+
+# Teste
+# set.seed(1)
+# modelo_teste <- psf(df_teste$train_data[[1]][[2]],
+#                     k = 2, 
+#                     w = 3,
+#                     cycle = 12)
+# pred_teste <- predict(modelo_teste, n.ahead = 24)
+
+# Seleciona observações, predições médias e predições usando k e w médios   
+pobs_postos_all <- pred_data_all %>%  # predições e observações 
+  inner_join(.,
+             test_data_all,
+             by = "code_stn") %>% 
+  select(test_data,mean_preds,pred_mpar) %>% 
+  unnest() 
+
+
+
+aval_postos_all <-  pobs_postos_all %>%  
+  summarise(KGE_mpreds = KGE(sim = mean_preds , obs = qnat_obs),
+            KGE_predmpar = KGE(sim = pred_mpar, obs = qnat_obs),
+            PBIAS = pbias(sim = mean_preds, obs = qnat_obs),
+            NRMSE = nrmse(sim = mean_preds, obs = qnat_obs),
+            NSE = NSE(sim = mean_preds, obs = qnat_obs),
+  ) %>% 
+  arrange(-KGE_mpreds)
+
+# Gráfico 
+posto287 <- pobs_postos_all %>% 
+  filter(code_stn == "287") %>% 
+  select(date,qnat_obs,pred_mpar)# melhor KGE usando pred_mpar
+
+posto287_ts <- xts(posto287[,3:4], 
+                   order.by = as.Date(posto287[["date"]]))
+forecast::autoplot(posto287_ts, facets = FALSE)
+
+# Crossvalidation usando apenas um posto 287 ------------------------
+# Baseado em: https://robjhyndman.com/hyndsight/tscvexample/
+# Faz previsões 12 meses a frente
+
+library(tsbox)
+
+posto <- 287
+qnat_posto287 <- qnat_data %>% 
+  sel_posto(.,posto) %>% 
+  apply_cmonth() %>% 
+  apply_cyears()
+
+
+order.by = as.Date(posto287[["date"]])
+
+
+xts_qnat287 <- xts(
+  qnat_posto287[,"qnat_obs"],
+  order.by = as.Date(qnat_posto287[["date"]])
+)
+
+ts_qnat287 <- ts_ts(xts_qnat287)
+
+
+k <- 24
+n <- nrow(qnat_posto287)
+st <- tsp(ts_qnat287)[1]+(k-2)/12
+n_ahead = 12
+
+# for (i in 1:(n - k))
+# {
+#   train <- subset(ts_qnat287, end = n - (n_ahead) * i + 1)
+#   test <- subset(auscafe, start = length(auscafe) - 60)
+# }
+
 
 
