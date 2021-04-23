@@ -226,174 +226,114 @@ for(i in 1:10)
 ## Aplicação do PSF a outros postos da ONS
 
 
-
-```{r func_aux, echo = FALSE}
-
-# Funções auxiliares
-
-get_cyears <- function(df){
-  cyrs <- df %>% 
-    group_by(ano = lubridate::year(date)) %>% 
-    tally() %>% 
-    filter(n == 12) %>% 
-    pull(ano)
-  return(cyrs)
-}
-
-
-apply_cyears  <- function(df){
-   cyrs <- get_cyears(df)
-   df_cyrs <- df %>% 
-     filter(lubridate::year(date) %in% cyrs)
-   return(df_cyrs)
-}
-
-
-train_data <- function(df){
-  cyrs <- get_cyears(df)
-  leave_out <- tail(cyrs,n = 2) # retira 2 últ. anos por padrão
-  data <- df %>% 
-    filter(!lubridate::year(date) %in% leave_out)
-  return(data)
-}
-
-
-test_data <- function(df){
-  nahead = 24
-  inds <- (nrow(df) - nahead -1):(nrow(df))
-  df <- df[inds,2]
-}
-
-psf_model <- function(df){
-  #set.seed(2)
-  model <- psf(df[,"qnat_obs"],cycle = 12) # seleciona a coluna qnat_obs
-  preds <- predict(model,n.ahead = 24)
-  return(preds)
-}
-```
-
-
 ```{r}
 # Média mensal das observações de vazão para todos os postos
 qnat_mly <- qnat_data %>% 
-  dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
-  dplyr::summarise(
-    qnat_obs = mean_wise(qnat), 
-    valid = nvalid(qnat), 
-    N = n(),
-    .groups = "drop"
-  ) %>%
-  dplyr::filter(valid >= 28)
-
-
-
-# Análise
-
-#lapply(by_code$data, '[[', 'date') como acessar coluna dentro da lista de df's
-
-
-# Seleciona apenas data, código do posto e obs de vazão nat.
-qnat_mly <- qnat_mly %>%
-  select(date,code_stn,qnat_obs)
-
-# Agrupa df pelo código do posto 
-by_code <- qnat_mly %>% 
+  apply_cmonth(.) %>% 
   group_by(code_stn) %>% 
-  nest()
-
-
-# Postos com ano completos (testado ok!) 
-bycd_cyrs <- by_code %>% 
-  mutate(data = map(data,apply_cyears))
+  nest() %>% 
+  mutate(
+    data = map(data, apply_cyears)
+  )
 
 # Dados de treinamento (sem últimos dois anos)
-train_data <- bycd_cyrs  %>% 
-  mutate(data = map(data, train_data))
+train_qmly <- qnat_mly  %>% 
+  mutate(data = map(data, get_traindt))
 
 
 # Dados para avaliação do PSF 
-tst_data <- by_code %>% 
-  mutate(obs = map(data,test_data)) %>% 
-  unnest(.,obs) %>% 
+test_qmly <- qnat_mly %>% 
+  mutate(qnat_obs = map(data,get_testdt)) %>% 
   select(code_stn,qnat_obs)
 
 
 
-# Selecionar qnat_obs --> train_data$data[[i]][:,2] (i = cód posto)
+# Vazão simulada
+preds_qmly <- train_qmly %>% 
+  mutate(qnat_pred = map(data,psf_reprod)) # PSF reprodutível
 
-preds_model <- train_data %>% 
-  mutate(preds = map(data, psf_model))
+# Predições e observações
+pobs_qmly <- preds_qmly %>% 
+  inner_join(.,
+             test_qmly,
+             by = "code_stn") %>% 
+  select(-data) %>% 
+  unnest()
 
 
-# Predições e code_stn
-preds <- preds_model[-2] %>% 
-  unnest(.,preds) 
-  
-
-# Avaliação do PSf   
-
-#pos_stat_inds <- c(6, 9, 17, 19) 
-
-preds_obs <- preds %>% 
-  ungroup() %>% 
-  mutate(qnat_obs = NA,
-         qnat_obs = replace(qnat_obs,
-                            values = tst_data$qnat_obs)
-         ) #%>% 
-  #$group_by(code_stn) 
-
-print(preds_obs)
-
-metricas <- preds_obs %>% 
+aval_qmly <- pobs_qmly %>% 
   group_by(code_stn) %>%
-  summarise(KGE = KGE(sim = preds, obs = qnat_obs),
-            PBIAS = pbias(sim = preds, obs = qnat_obs),
-            nse = NSE(sim = preds, obs = qnat_obs),
+  summarise(mKGE = KGE(sim = qnat_pred, obs = qnat_obs),
+            mPBIAS = pbias(sim = qnat_pred, obs = qnat_obs),
+            mNSE = NSE(sim = qnat_pred, obs = qnat_obs),
             #RMSE = ModelMetrics::rmse(actual = qnat_obs,
-                                      #predicted = preds)
-            NRMSE = nrmse(sim = preds, obs = qnat_obs)
+                                      #predicted = qnat_pred)
+            mNRMSE = nrmse(sim = qnat_pred, obs = qnat_obs)
             ) %>% 
-  arrange(-KGE)
+  arrange(-mKGE)
 
-(metricas)
+print(aval_qmly)
 ```
 
 
-
-
-
-
-## Comparação com outros métodos
+## Ensemble PSF
 
 
 ```{r}
-library(tsbox)
-# TS
-df_comp <- xts(data_train[,2], order.by = as.Date(data_train[["date"]]))
-# xts to time series
-ts_dfcomp <- ts_ts(df_comp)
+# Modelos e predições resultantes de 5 iterações para cada posto
+
+# start_time <- Sys.time()
+# esb_qmly <- train_qmly %>% 
+#   mutate(
+#     models = map(data,ensemble_models),
+#     preds = map(data,ensemble_preds)
+#   )
+# end_time <- Sys.time() # Demorou 8.775542 mins
+
+#saveRDS(ensemble_postos_all, file = here('doc', 'ensemble_all.rds'))
+esb_qmly <- readRDS(here('doc', 'ensemble_all.rds'))
+
+# Predições e observações do ensemble
+pobqmly_esb <- esb_qmly %>% 
+  mutate(
+    mparam_qmly = map(models,get_mpar), # parâmetros k e w médios
+    qnat_mpred = unlist(map(preds,get_mpred),
+                        recursive = FALSE), # predições médias das iter
+    qnat_mpar = map(train_data, # predições usando k e w médios
+                    ~ensemble_mpar(.x,mparam_qmly))
+  ) %>% 
+   inner_join(.,
+             test_qmly,
+             by = "code_stn") %>% 
+  select(qnat_obs,qnat_mpred,qnat_mpar) %>% 
+  unnest() 
 
 
-# Função para testar o método LPSF
-test1 <- function(data, nval){
-  return(lpsf(data = data, n.ahead = nval))
-}
-# Função para testar o método PSF
-test2 <- function(data, nval){
-  a <- psf(data = data, cycle = 12)
-  b <- predict(object = a, n.ahead = nval)
-  return(b)
-  }
 
-a1 <- prediction_errors(data = ts_dfcomp, 
-                        nval = 12*length(leave_out),
-                        Method = c("test1(data, nval)", "test2(data, nval)"),
-                        MethodName = c("LPSF","PSF"),
-                        append_ = 1)
-
-b1 <- plot(a1)
-
+aval_ensemble <- pobqmly_esb %>% 
+  summarise(KGE_mpred = KGE(sim = qnat_mpred, obs = qnat_obs),
+            KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
+            mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
+            mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
+            mNSE(sim = qnat_mpred, obs = qnat_obs)
+  ) %>% 
+  arrange(-KGE_mpred)
 ```
+
+Gráfico do posto com melhor resultado
+
+
+```{r}
+# Gráfico 
+qnat_posto287 <- pobqmly_esb %>% 
+  sel_station(.,287) %>% 
+  select(date,qnat_obs,qnat_mpred)# melhor KGE usando qnat_mpred
+
+posto287_xts <- xts(qnat_posto287[,c("qnat_obs","qnat_mpred")], 
+                   order.by = as.Date(qnat_posto287[["date"]]))
+forecast::autoplot(posto287_xts, facets = FALSE)
+```
+
 
 
 
