@@ -48,14 +48,14 @@ easypackages::libraries(pacotes)
 
 Scripts:
 
-```{r}
+```{r scripts}
 source(here('R', 'load-data.R'))
 source(here('R', 'utils.R'))
 ```
 
-Dados
+Dados:
 
-```{r}
+```{r dados}
 # Carrega dados-----------------------------------------------------
 qnat_data <- qnat_dly_ons() %>%
   select(date, qnat, code_stn) %>%
@@ -92,7 +92,7 @@ same_seed <- list()  # resultados das predições usando mesmos seeds
 
 for(i in 1:n){
   set.seed(i)
-  dif_seeds[[i]] <- psf_model(treino)
+  dif_seeds[[i]] <- psf_model(train)
 }
   
 for(i in 1:n){
@@ -108,9 +108,6 @@ for(i in 1:n){
 ```
 ```{r}
 PSF <- NULL
-ARIMA <- NULL
-ETS <- NULL
-
 for(i in 1:5)
 {
   set.seed(i)
@@ -119,21 +116,13 @@ for(i in 1:5)
   psf_model <- psf(train,cycle = 12)
   a <- predict(psf_model, n.ahead = 48)
 
-  # for ARIMA
-  b <- forecast(auto.arima(train), 48)$mean
-  
-  # for ets
-  c <- as.numeric(forecast(ets(train), 48)$mean)
   
   ## For Error Calculations
   # Error for PSF
   PSF[i] <- sqrt(mean((teste - a)^2))
-  # Error for ARIMA
-  ARIMA[i] <- sqrt(mean((teste - b)^2))
-  # Error for ETS
-  ETS[i] <- sqrt(mean((teste - c)^2))
 
 }
+(PSF)
 ```
 
 
@@ -309,16 +298,16 @@ train_data_all <- qnat_all %>%
   select(code_stn,train_data)
 
 # Modelos e predições resultantes de 5 iterações para cada posto
-start_time <- Sys.time()
-ensemble_postos_all <- train_data_all %>% 
-  mutate(
-    models = map(train_data,ensemble_models),
-    preds = map(train_data,ensemble_preds)
-  )
-end_time <- Sys.time() # Demorou 8.775542 mins
+# start_time <- Sys.time()
+# ensemble_postos_all <- train_data_all %>% 
+#   mutate(
+#     models = map(train_data,ensemble_models),
+#     preds = map(train_data,ensemble_preds)
+#   )
+# end_time <- Sys.time() # Demorou 8.775542 mins
 
 #saveRDS(ensemble_postos_all, file = here('doc', 'ensemble_all.rds'))
-#ensemble_postos_all <- readRDS(here('doc', 'ensemble_all.rds'))
+ensemble_postos_all <- readRDS(here('doc', 'ensemble_all.rds'))
 
 # unlist(teste,recursive=FALSE) --> tira um level da lista
 
@@ -354,7 +343,7 @@ aval_postos_all <-  pobs_postos_all %>%
   ) %>% 
   arrange(-KGE_mpreds)
 
-
+(aval_postos_all)
 
 # Gráfico 
 posto287 <- pobs_postos_all %>% 
