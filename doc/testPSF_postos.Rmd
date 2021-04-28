@@ -39,9 +39,9 @@ pacotes <- c(
   "checkmate",
   "xts",
   "hydroGOF",
-  "decomposedPSF",
-  "ForecastTB",
-  "ModelMetrics"
+  "ModelMetrics",
+  "forecast",
+  "timetk"
 )
 # Carregar os pacotes
 easypackages::libraries(pacotes)
@@ -96,21 +96,20 @@ qnat_posto_mly <- qnat_posto %>%
 #   lhmetools::complete_dates(group = "code_stn", time_step = # "month") %>%
 #   str()
 
+
+
 # Anos completos
 anos_comp <- qnat_posto_mly %>%
   group_by(ano = lubridate::year(date)) %>%
   tally() %>%
   filter(n == 12) %>%
   pull(ano) 
-
 # Usa apenas as observações dos anos completos
 qnat_posto_mly <- qnat_posto_mly %>%
   filter(lubridate::year(date) %in% anos_comp)
-
 # check
 #qnat_posto_mly %>%
 #  filter(valid != N)
-
 # Seleciona apenas a data e as observações de vazão 
 qnat_posto_mly <- qnat_posto_mly %>%
   select(date, qnat_obs)
@@ -134,7 +133,7 @@ data_train <- qnat_posto_mly %>%
   filter(!lubridate::year(date) %in% leave_out)
 
 # Treinamento do modelo
-set.seed(2)
+set.seed(123)
 modelo_munhoz <- psf(
   data_train[["qnat_obs"]],
   #n.ahead = 12 * length(leave_out),
@@ -197,7 +196,7 @@ Podemos avaliar a média do [KGE](https://www.rdocumentation.org/packages/hydroG
 
 
 ```{r}
-obs_74 <- qnat_posto_mly_pred[inds,]$qnat_obs
+obs_74 <- df$qnat_obs
 metricas74 <- NULL
 
 for(i in 1:10)
@@ -218,7 +217,7 @@ for(i in 1:10)
 }
 
 
-(KGE_psf <- mean(metricas74))
+(KGE74_psf <- mean(metricas74))
 ```
 
 
@@ -246,11 +245,10 @@ test_qmly <- qnat_mly %>%
   mutate(qnat_obs = map(data,get_testdt)) %>% 
   select(code_stn,qnat_obs)
 
-
-
-# Vazão simulada
+# Vazão simulada (resultados reprodutíveis)
 preds_qmly <- train_qmly %>% 
-  mutate(qnat_pred = map(data,psf_reprod)) # PSF reprodutível
+  mutate(qnat_pred = map(data,
+                         ~psf_reprod(.x, ret = "preds"))) 
 
 # Predições e observações
 pobs_qmly <- preds_qmly %>% 
@@ -266,8 +264,8 @@ aval_qmly <- pobs_qmly %>%
   summarise(mKGE = KGE(sim = qnat_pred, obs = qnat_obs),
             mPBIAS = pbias(sim = qnat_pred, obs = qnat_obs),
             mNSE = NSE(sim = qnat_pred, obs = qnat_obs),
-            #RMSE = ModelMetrics::rmse(actual = qnat_obs,
-                                      #predicted = qnat_pred)
+            RMSE = ModelMetrics::rmse(actual = qnat_obs,
+                                  predicted = qnat_pred),
             mNRMSE = nrmse(sim = qnat_pred, obs = qnat_obs)
             ) %>% 
   arrange(-mKGE)
@@ -276,7 +274,7 @@ print(aval_qmly)
 ```
 
 
-## Ensemble PSF
+## Aplicação do ensemble PSF
 
 
 ```{r}
@@ -318,9 +316,11 @@ aval_ensemble <- pobqmly_esb %>%
             mNSE(sim = qnat_mpred, obs = qnat_obs)
   ) %>% 
   arrange(-KGE_mpred)
+
+(aval_ensemble)
 ```
 
-Gráfico do posto com melhor resultado
+Gráfico do posto com melhor KGE
 
 
 ```{r}
@@ -335,7 +335,61 @@ forecast::autoplot(posto287_xts, facets = FALSE)
 ```
 
 
+## Validação cruzada aplicada ao posto 287
+
+```{r}
+qnatmly_287 <- qnat_mly %>% 
+  sel_station(.,287) %>% 
+  unnest() %>% 
+  ungroup() %>% 
+  select(date,qnat_obs)
+
+# Dados de treinamento sem o último ano
+train287_qmly <- get_traindt(qnatmly_287,yrs = 1)
+
+# Dados para avaliação do PSF 
+test287_qmly <- get_testdt(qnatmly_287,n = 12)
+
+resample_spec <- time_series_cv(data = qnatmly_287,
+                                assess      = "12 months",# df teste inicial
+                                skip        = "12 months",
+                                cumulative  = TRUE,
+                                slice_limit = 5) 
 
 
+qmly287_slices <- resample_spec %>% tk_time_series_cv_plan() %>%
+  nest(date,qnat_obs) %>% 
+  pivot_wider(names_from = .key,values_from = data)
+
+# Predições usando um horizonte de 12 meses
+cv287_qmly <- qmly287_slices %>% 
+  mutate(
+    qnat_pred = map(training,
+                    ~psf_reprod(.x,n = 12)),
+    model = map(training,
+                ~psf_reprod(.x,n = 12, ret = "model")
+                ),
+    cvparams = map(model,get_cvpar)
+  )
+
+# Parâmetros k e w
+cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
+                    /length(cv287_qmly[["cvparams"]]),0)
+
+preds287_qmly <- psf_cvparam(train287_qmly,
+                             params = cvm_params)
+
+pobs287_qmly <- mutate(train287_qmly,
+                  qnat_pred = NA,
+                  qnat_pred = replace(qnat_pred,
+                    values = preds287_qmly
+                  )
+) 
+
+avalcv_287 <- pobs287_qmly %>% 
+  summarise(KGE = KGE(sim = qnat_pred, obs = qnat_obs)
+  ) 
+(avalcv_287)
+```
 
 
