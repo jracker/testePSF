@@ -72,40 +72,38 @@ apply_cyears  <- function(df){
 }
 
 
-get_traindt <- function(df){
+get_traindt <- function(df, yrs = 2){
   # Função para pegar os dados de treinamento
   # Padrão: 2 últimos anos de observações são removidos
   cyrs <- get_cyears(df)
-  leave_out <- tail(cyrs,n = 2) # retira 2 últ. anos por padrão
+  leave_out <- tail(cyrs,n = yrs) # retira 2 últ. anos por padrão
   data <- df %>% 
     filter(!lubridate::year(date) %in% leave_out)
   return(data)
 }
 
 
-get_testdt <- function(df){
+get_testdt <- function(df,n = 24){
   # Função para pegar os dados de teste
   # Padrão: 2 últimos anos de observações são usados como teste
-  nahead = 24
-  inds <- (nrow(df) - nahead + 1):(nrow(df))
+  inds <- (nrow(df) - n + 1):(nrow(df))
   df <- df[inds,] %>% 
     select(date,qnat_obs)
-  #df[inds,"qnat_obs"] # df[inds,2]
 }
 
 
-psf_reprod <- function(df){
+psf_reprod <- function(df, n = 24, ret = "preds"){
   # Função para aplicar o psf, retorna as predições do modelo
   set.seed(1) # p/ reprodutibilidade
-  model <- psf(df[,"qnat_obs"],cycle = 12) #df[,2]
-  preds <- predict(model,n.ahead = 24)
-  return(preds)
+  model <- psf(df[,"qnat_obs"],cycle = 12) 
+  preds <- predict(model,n.ahead = n) 
+  if (ret == "preds") return(preds) else return(model)
 }
 
-psf4ensemble <- function(df){
+psf4ensemble <- function(df,n = 24){
   # Função para aplicar o psf para ensemble
-  model <- psf(df[,"qnat_obs"],cycle = 12) #df[,2]
-  preds <- predict(model,n.ahead = 24)
+  model <- psf(df[,"qnat_obs"],cycle = 12)
+  preds <- predict(model,n.ahead = n) 
   return(preds)
 }
 
@@ -165,12 +163,27 @@ get_mpar <- function(modelo){
 
 
 get_mpred <- function(lista){
-  # Faz a média das predições dos modelos
+  # Faz a média das predições dos modelos retornados pelo ensemble
   pred_mean <- list(
     rowMeans(as.data.frame(lista))
   )
 }
 
 
+# For time series cross validation -----------------------------
 
+get_cvpar <- function(model){
+  # Parâmetros após validação cruzada
+  unl_model <- unlist(model,recursive = FALSE)
+  params_psf <- c(unl_model$k,unl_model$w)
+}
+
+psf_cvparam <- function(df,n = 12, params = NULL){
+  set.seed(1)
+  model <- psf(df[["qnat_obs"]],
+               k = params[1],
+               w = params[2],
+               cycle = 12)
+  preds <- predict(model,n)
+}
 
