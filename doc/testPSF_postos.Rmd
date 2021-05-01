@@ -77,7 +77,6 @@ glimpse(qnat_posto)
 
 
 Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com mais pelo menos 28 observações válidas e anos completos.
-
 ```{r}
 # Seleciona observações com pelo menos 28 observações válidas no mês
 qnat_posto_mly <- qnat_posto %>% 
@@ -113,7 +112,11 @@ qnat_posto_mly <- qnat_posto_mly %>%
 # Seleciona apenas a data e as observações de vazão 
 qnat_posto_mly <- qnat_posto_mly %>%
   select(date, qnat_obs)
+```
 
+É necessário especificar na função `psf` do pacote `PSF` o número de valores que caracterizam um ciclo na série temporal caso os dados não estejam no formato `ts`. No código abaixo realizamos a verificação se a série do posto 74 está no formato correto, isto é, se o número de observações é múltiplo do ciclo.
+
+```{r}
 # check
 head(qnat_posto_mly)
 tail(qnat_posto_mly)
@@ -122,7 +125,11 @@ nrow(qnat_posto_mly) %/% 12
 ```
 
 
+
+
 ### Aplicação do algoritmo PSF
+
+Os dados usados para o treinamento do modelo abrangeu os anos de 1969 a 2016 e, dessa forma, as predições foram feitas para os anos de 2017 e 2018. No gráfico da série temporal podemos visualizar as predições destacadas na cor azul.
 
 ```{r}
 #PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
@@ -172,7 +179,7 @@ qnat_posto_mly_pred <- mutate(qnat_posto_mly,
 tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
 ```
 
-
+No gráfico iremos comparar os valores das previstos pelo *PSF* e os valores observados da série de vazão naturalizada para os anos de 2017 e 2018. Observa-se que a série hidrológica do posto 74 apresenta uma relação sinal ruído alta. Em decorrência disso as predições do método `PSF`, que busca selecionar padrões específicos e realizar as predições com base em valores passados, foram bastante diferentes dos valores observados.
 
 ```{r}
 df <- qnat_posto_mly_pred[inds,]
@@ -181,7 +188,10 @@ forecast::autoplot(df_ts, facets = FALSE)
 ```
 
 
-## Avaliação
+## Avaliação do PSF
+
+
+Selecionamos algumas métricas para realizar uma avaliação quantitativa do `PSF` no posto 74.
 
 ```{r}
 # seleciona apenas alguns índices
@@ -192,7 +202,7 @@ hydroGOF::gof(
   obs = df_ts$qnat_obs)[pos_stat_inds,]
 ```
 
-Podemos avaliar a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF ao alterar, por exemplo, parâmetros como `k` e `w`.
+Podemos avaliar a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF.
 
 
 ```{r}
