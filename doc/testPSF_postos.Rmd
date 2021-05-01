@@ -320,8 +320,8 @@ aval_ensemble <- pobqmly_esb %>%
 (aval_ensemble)
 ```
 
-Gráfico do posto com melhor KGE
 
+Comparação das predições do modelo PSF para os anos de 2017 e 2018 com os valores observados de vazão naturalizada para o posto 287 da ONS.
 
 ```{r}
 # Gráfico 
@@ -335,10 +335,10 @@ forecast::autoplot(posto287_xts, facets = FALSE)
 ```
 
 
-## Validação cruzada aplicada ao posto 287
+## Validação cruzada aplicada ao posto 287 considerando um horizonte de um ano
 
 ```{r}
-qnatmly_287 <- qnat_mly %>% 
+qnatmly_287 <- qnat_mly %>% # dados completos
   sel_station(.,287) %>% 
   unnest() %>% 
   ungroup() %>% 
@@ -354,7 +354,7 @@ resample_spec <- time_series_cv(data = qnatmly_287,
                                 assess      = "12 months",# df teste inicial
                                 skip        = "12 months",
                                 cumulative  = TRUE,
-                                slice_limit = 5) 
+                                slice_limit = 40) # valor ótimo 40
 
 
 qmly287_slices <- resample_spec %>% tk_time_series_cv_plan() %>%
@@ -364,20 +364,22 @@ qmly287_slices <- resample_spec %>% tk_time_series_cv_plan() %>%
 # Predições usando um horizonte de 12 meses
 cv287_qmly <- qmly287_slices %>% 
   mutate(
-    qnat_pred = map(training,
-                    ~psf_reprod(.x,n = 12)),
     model = map(training,
-                ~psf_reprod(.x,n = 12, ret = "model")
+                ~psf_reprod(.x,n = 12, ret = "model") # para extrair os parâmetros
                 ),
-    cvparams = map(model,get_cvpar)
+    cvparams = map(model,get_cvpar) # extrai os parâmetros k e w 
   )
 
 # Parâmetros k e w
 cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
                     /length(cv287_qmly[["cvparams"]]),0)
 
+
+
+# Os parâmetros obtidos pela validação cruzadas são aplicados no modelo 
 preds287_qmly <- psf_cvparam(train287_qmly,
                              params = cvm_params)
+
 
 pobs287_qmly <- mutate(train287_qmly,
                   qnat_pred = NA,
@@ -391,5 +393,49 @@ avalcv_287 <- pobs287_qmly %>%
   ) 
 (avalcv_287)
 ```
+
+
+## Validação cruzada aplicada aos postos que apresentaram os melhores KGE 
+
+
+```{r}
+qnatmly_cv <- qnat_mly %>% # dados completos
+ dplyr::filter(code_stn == 145|
+               code_stn == 281|
+               code_stn == 295)
+
+qnatmly_cv <- qnatmly_cv %>% 
+mutate(
+  train_data = map(data,
+                   ~get_traindt(.x,yrs = 1)), # retira obs do último ano
+  slices = map(train_data,
+              ~time_series_cv(.x,
+                assess = "12 months",
+                skip = "12 months",
+                cumulative = TRUE,
+                slice_limit = 3)),
+  slices_plan = map(slices,tk_time_series_cv_plan),
+  nested_slices = map(slices_plan,
+                      ~nest(.,date,qnat_obs)),
+  wider_slices = map(nested_slices,
+                     ~pivot_wider(.,
+                                  names_from = .key,
+                                  values_from = data))
+)
+
+wqnatmly_cv <- qnatmly_cv %>% 
+  select(wider_slices) %>% 
+  unnest() %>% 
+  mutate(
+    model = map(training,
+                ~psf_reprod(.x,n = 12, ret = "model") # para extrair os parâmetros
+                ),
+    cvparams = map(model,get_cvpar), # extrai os parâmetros k e w 
+  ) %>% 
+  select(code_stn,cvparams) %>% 
+  group_by(code_stn) 
+```
+
+
 
 
