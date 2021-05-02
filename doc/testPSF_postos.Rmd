@@ -194,8 +194,7 @@ forecast::autoplot(df_ts, facets = FALSE)
 Selecionamos algumas métricas para realizar uma avaliação quantitativa do `PSF` no posto 74.
 
 ```{r}
-# seleciona apenas alguns índices
-# ctrl+alt+c
+# Seleciona apenas alguns índices
 pos_stat_inds <- c(1:2, 4:6, 9, 17, 19:20) 
 hydroGOF::gof(
   sim = df_ts$qnat_pred, 
@@ -386,12 +385,12 @@ cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
 
 
 
-# Os parâmetros obtidos pela validação cruzadas são aplicados no modelo 
+# Os parâmetros médios obtidos pela validação cruzadas são aplicados no modelo 
 preds287_qmly <- psf_cvparam(train287_qmly,
                              params = cvm_params)
 
 
-pobs287_qmly <- mutate(train287_qmly,
+pobs287_qmly <- mutate(test287_qmly,
                   qnat_pred = NA,
                   qnat_pred = replace(qnat_pred,
                     values = preds287_qmly
@@ -404,6 +403,11 @@ avalcv_287 <- pobs287_qmly %>%
 (avalcv_287)
 ```
 
+```{r}
+cv287_xts <- xts(pobs287_qmly[,c("qnat_obs","qnat_pred")], 
+                   order.by = as.Date(pobs287_qmly[["date"]]))
+forecast::autoplot(cv287_xts, facets = FALSE)
+```
 
 ## Validação cruzada aplicada aos postos que apresentaram os melhores KGE 
 
@@ -414,16 +418,26 @@ qnatmly_cv <- qnat_mly %>% # dados completos
                code_stn == 281|
                code_stn == 295)
 
-qnatmly_cv <- qnatmly_cv %>% 
+traincv_qmly <- qnatmly_cv %>% 
+  mutate(
+    data = map(data,
+               ~get_traindt(.x,yrs = 1))
+  )
+                  
+testecv_qmly <- qnatmly_cv %>% 
+  mutate(
+    data = map(data,
+               ~get_testdt(.x,n = 12))
+  )
+
+slicescv_qnatmly <- traincv_qmly %>% 
 mutate(
-  train_data = map(data,
-                   ~get_traindt(.x,yrs = 1)), # retira obs do último ano
-  slices = map(train_data,
+  slices = map(data,
               ~time_series_cv(.x,
                 assess = "12 months",
                 skip = "12 months",
                 cumulative = TRUE,
-                slice_limit = 3)),
+                slice_limit = 10)),
   slices_plan = map(slices,tk_time_series_cv_plan),
   nested_slices = map(slices_plan,
                       ~nest(.,date,qnat_obs)),
@@ -433,7 +447,9 @@ mutate(
                                   values_from = data))
 )
 
-wqnatmly_cv <- qnatmly_cv %>% 
+
+# Parâmetros de cada slice agrupados pelo código do posto
+wqnatmly_cv <- slicescv_qnatmly  %>% 
   select(wider_slices) %>% 
   unnest() %>% 
   mutate(
@@ -443,9 +459,45 @@ wqnatmly_cv <- qnatmly_cv %>%
     cvparams = map(model,get_cvpar), # extrai os parâmetros k e w 
   ) %>% 
   select(code_stn,cvparams) %>% 
-  group_by(code_stn) 
-```
+  group_by(code_stn)
 
+
+# Parâmetros médios k e w
+wqnat_cvmpar <- wqnatmly_cv %>% 
+  nest() %>% 
+  mutate(
+    cvm_params = map(data,getcv_mpar)
+  ) %>% 
+  select(cvm_params)
+
+
+# Vazão simulada usando os parâmetros médios retornados na validação cruzada
+preds_cvqmly <- train_qmly %>% 
+  inner_join(.,
+             wqnat_cvmpar,
+             by = "code_stn") %>% 
+  mutate(qnat_cvpred = map(data,
+                         ~ensemble_mpar(.x,cvm_params,n = 12))) %>% 
+  select(qnat_cvpred)
+
+pobscv_qmly <- preds_cvqmly %>% 
+  inner_join(
+    .,
+    testecv_qmly,
+    by = "code_stn"
+  ) %>% unnest() %>% 
+  select(code_stn,date,everything())
+
+
+avalcv_qmly <- pobscv_qmly %>% 
+  summarise(KGE = KGE(sim = qnat_cvpred, obs = qnat_obs),
+            PBIAS = pbias(sim = qnat_cvpred, obs = qnat_obs),
+            NRMSE = nrmse(sim = qnat_cvpred, obs = qnat_obs),
+            NSE(sim = qnat_cvpred, obs = qnat_obs)
+  ) %>% 
+  arrange(-KGE)
+
+```
 
 
 
