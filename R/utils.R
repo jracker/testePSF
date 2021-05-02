@@ -134,7 +134,7 @@ ensemble_models <- function(df){
   
 }
 
-ensemble_mpar <- function(df,params){
+ensemble_mpar <- function(df,params,n = 24){
   # Retorna predições feitas com os valores médios de k e w
   # extraídos usando a função get_mpar
   set.seed(1)
@@ -142,7 +142,7 @@ ensemble_mpar <- function(df,params){
                k = params[[1]][[1]],
                w = params[[1]][[2]],
                cycle = 12)
-  pred <- predict(model,n.ahead = 24)
+  pred <- predict(model,n.ahead = n)
   return(pred)
 }
 
@@ -178,12 +178,17 @@ get_cvpar <- function(model){
   params_psf <- c(unl_model$k,unl_model$w)
 }
 
-psf_cvparam <- function(df,n = 12, params = NULL){
-  set.seed(1)
-  model <- psf(df[["qnat_obs"]],
-               k = params[1],
-               w = params[2],
-               cycle = 12)
-  preds <- predict(model,n)
+getcv_mpar <-  function(df){
+  # Extrai parâmetros médios k e w após a validação cruzada
+  # Returna um vetor atômico 
+  param_values <- list()
+  for(i in 1:1){
+    teste <- round(rowMeans(as.data.frame(df[[i]])),0)
+    param_values[[i]] <-  unlist(teste, recursive = FALSE)
+  }
+  return(unlist(param_values,recursive = FALSE))
 }
+
+
+
 
