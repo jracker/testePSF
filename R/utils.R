@@ -174,6 +174,7 @@ get_mpred <- function(lista){
 
 get_cvpar <- function(model){
   # Parâmetros após validação cruzada
+  # Extrai um nível da lista
   unl_model <- unlist(model,recursive = FALSE)
   params_psf <- c(unl_model$k,unl_model$w)
 }
@@ -190,5 +191,15 @@ getcv_mpar <-  function(df){
 }
 
 
+psf_cvparam <- function(df,params){
+  # Usar para cv de um único posto, para avaliar mais de um posto usar
+  # função ensemblem_par
+  set.seed(1)
+  model <- psf(df[,"qnat_obs"],
+               k = params[1],
+               w = params[2],
+               cycle = 12)
+  preds <- predict(model,n.ahead = 12)
+}
 
 
