@@ -379,17 +379,18 @@ cv287_qmly <- qmly287_slices %>%
     cvparams = map(model,get_cvpar) # extrai os parâmetros k e w 
   )
 
-# Parâmetros k e w
+# Parâmetros k e w médios
+# Soma os elementos dos vetores e divide pelo número de slices
 cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
                     /length(cv287_qmly[["cvparams"]]),0)
 
 
 
-# Os parâmetros médios obtidos pela validação cruzadas são aplicados no modelo 
+# Os parâmetros médios obtidos na validação cruzada são aplicados no modelo 
 preds287_qmly <- psf_cvparam(train287_qmly,
                              params = cvm_params)
 
-
+# As predições são adicionadas aos valores observados 
 pobs287_qmly <- mutate(test287_qmly,
                   qnat_pred = NA,
                   qnat_pred = replace(qnat_pred,
@@ -414,9 +415,16 @@ forecast::autoplot(cv287_xts, facets = FALSE)
 
 ```{r}
 qnatmly_cv <- qnat_mly %>% # dados completos
- dplyr::filter(code_stn == 145|
+ dplyr::filter(code_stn == 287|
+               code_stn == 295|
+               code_stn == 145|
                code_stn == 281|
-               code_stn == 295)
+               code_stn == 278|
+               code_stn == 291|
+               code_stn == 279|
+               code_stn == 99|
+               code_stn == 277|
+               code_stn == 190)
 
 traincv_qmly <- qnatmly_cv %>% 
   mutate(
@@ -430,6 +438,8 @@ testecv_qmly <- qnatmly_cv %>%
                ~get_testdt(.x,n = 12))
   )
 
+
+# Simplificar
 slicescv_qnatmly <- traincv_qmly %>% 
 mutate(
   slices = map(data,
@@ -437,7 +447,7 @@ mutate(
                 assess = "12 months",
                 skip = "12 months",
                 cumulative = TRUE,
-                slice_limit = 10)),
+                slice_limit = 20)),
   slices_plan = map(slices,tk_time_series_cv_plan),
   nested_slices = map(slices_plan,
                       ~nest(.,date,qnat_obs)),
@@ -449,6 +459,7 @@ mutate(
 
 
 # Parâmetros de cada slice agrupados pelo código do posto
+# Para reduzir tempo de simulação, diminuir o número de slices
 wqnatmly_cv <- slicescv_qnatmly  %>% 
   select(wider_slices) %>% 
   unnest() %>% 
@@ -462,7 +473,7 @@ wqnatmly_cv <- slicescv_qnatmly  %>%
   group_by(code_stn)
 
 
-# Parâmetros médios k e w
+# Parâmetros médios de k e w de cada posto
 wqnat_cvmpar <- wqnatmly_cv %>% 
   nest() %>% 
   mutate(
@@ -471,7 +482,7 @@ wqnat_cvmpar <- wqnatmly_cv %>%
   select(cvm_params)
 
 
-# Vazão simulada usando os parâmetros médios retornados na validação cruzada
+# Vazão prevista usando os parâmetros médios retornados na validação cruzada
 preds_cvqmly <- train_qmly %>% 
   inner_join(.,
              wqnat_cvmpar,
@@ -480,6 +491,7 @@ preds_cvqmly <- train_qmly %>%
                          ~ensemble_mpar(.x,cvm_params,n = 12))) %>% 
   select(qnat_cvpred)
 
+# Predições e observações agrupadas pelos postos
 pobscv_qmly <- preds_cvqmly %>% 
   inner_join(
     .,
@@ -493,10 +505,13 @@ avalcv_qmly <- pobscv_qmly %>%
   summarise(KGE = KGE(sim = qnat_cvpred, obs = qnat_obs),
             PBIAS = pbias(sim = qnat_cvpred, obs = qnat_obs),
             NRMSE = nrmse(sim = qnat_cvpred, obs = qnat_obs),
-            NSE(sim = qnat_cvpred, obs = qnat_obs)
+            NSE = NSE(sim = qnat_cvpred, obs = qnat_obs),
+            RMSE = ModelMetrics::rmse(actual = qnat_obs,
+                                      predicted = qnat_cvpred)           
   ) %>% 
   arrange(-KGE)
 
+(avalcv_qmly)
 ```
 
 
