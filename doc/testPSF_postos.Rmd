@@ -3,6 +3,8 @@ title: "Aplicação do algoritmo PSF a séries de vazão naturalizada"
 author: "Jerônimo Acker D'Ornellas"
 date: "08/04/2021"
 output: html_document
+editor_options: 
+  chunk_output_type: inline
 ---
 
 
@@ -26,7 +28,11 @@ Pacotes necessários:
 
 ```{r, message=FALSE}
 if(!require(PSF)) remotes::install_github("neerajdhanraj/PSF")
-
+if(!require(timetk)) remotes::install_github("business-science/timetk")
+# tive que usar o tidyr do github
+# por causa de erro no unnest()
+#  Error: Input must be list of vectors
+# remotes::install_github("tidyverse/tidyr")
 pacotes <- c(
   "here",
   "usethis",
@@ -76,7 +82,8 @@ glimpse(qnat_posto)
 ```
 
 
-Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com mais pelo menos 28 observações válidas e anos completos.
+Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com pelo menos 28 observações válidas e anos completos.
+
 ```{r}
 # Seleciona observações com pelo menos 28 observações válidas no mês
 qnat_posto_mly <- qnat_posto %>% 
@@ -94,9 +101,11 @@ qnat_posto_mly <- qnat_posto %>%
 # qnat_posto_mly %>% 
 #   lhmetools::complete_dates(group = "code_stn", time_step = # "month") %>%
 #   str()
+```
 
+Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da de aplicação do PSF.
 
-
+```{r}
 # Anos completos
 anos_comp <- qnat_posto_mly %>%
   group_by(ano = lubridate::year(date)) %>%
@@ -112,33 +121,31 @@ qnat_posto_mly <- qnat_posto_mly %>%
 # Seleciona apenas a data e as observações de vazão 
 qnat_posto_mly <- qnat_posto_mly %>%
   select(date, qnat_obs)
-```
 
-É necessário especificar na função `psf` do pacote `PSF` o número de valores que caracterizam um ciclo na série temporal caso os dados não estejam no formato `ts`. No código abaixo realizamos a verificação se a série do posto 74 está no formato correto, isto é, se o número de observações é múltiplo do ciclo.
-
-```{r}
 # check
 head(qnat_posto_mly)
 tail(qnat_posto_mly)
-nrow(qnat_posto_mly) %% 12 
-nrow(qnat_posto_mly) %/% 12
+stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
+#nrow(qnat_posto_mly) %/% 12
 ```
-
-
 
 
 ### Aplicação do algoritmo PSF
 
-Os dados usados para o treinamento do modelo abrangeu os anos de 1969 a 2016 e, dessa forma, as predições foram feitas para os anos de 2017 e 2018. No gráfico da série temporal podemos visualizar as predições destacadas na cor azul.
+Explicar o que e porquê está sendo feito isso. Para testar o PSF é necessário ... período de treino e teste ... 2 anos ...
+
 
 ```{r}
 #PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
-
-# Retirar observações dos dois últimos anos: 2017 e 2018
+# dados de treino: 2017 e 2018
 (leave_out <- tail(anos_comp, n = 2))
 data_train <- qnat_posto_mly %>%
   filter(!lubridate::year(date) %in% leave_out)
+```
 
+O PSF requer a especificação dos parâmetros ... k, w, cycle, pq estes valores ...
+
+```{r}
 # Treinamento do modelo
 set.seed(123)
 modelo_munhoz <- psf(
@@ -149,21 +156,21 @@ modelo_munhoz <- psf(
   w = 1:10,
   cycle = 12
 )
+```
 
-# Realiza a previsão de vazão nos dois últimos meses (2017 e 2018)
+Com o modelo treinado podemos prever para o período de teste usando: 
+
+```{r}
+# teste: previsão de vazão para 2017 e 2018
 pred_munhoz <- predict(modelo_munhoz,
-                       n.ahead = 12 * length(leave_out))
-
+                       n.ahead = 12 * length(leave_out)
+                       )
 # Comparação dos valores observados e previstos para os dois últimos anos
-plot(
-  modelo_munhoz,
-  pred_munhoz
-  )
+plot(modelo_munhoz, pred_munhoz)
 ```
 
 
-
-Adicionando previsões aos dados originais para previsão.
+As previsões do PSF podem ser adicionadas aos dados originais.
 
 ```{r}
 inds <- (nrow(data_train) + 1):(nrow(data_train) + (12 * length(leave_out)))
@@ -179,65 +186,82 @@ qnat_posto_mly_pred <- mutate(qnat_posto_mly,
 tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
 ```
 
-No gráfico iremos comparar os valores das previstos pelo *PSF* e os valores observados da série de vazão naturalizada para os anos de 2017 e 2018. Observa-se que a série hidrológica do posto 74 apresenta uma relação sinal ruído alta. Em decorrência disso as predições do método `PSF`, que busca selecionar padrões específicos e realizar as predições com base em valores passados, foram bastante diferentes dos valores observados.
+
 
 ```{r}
 df <- qnat_posto_mly_pred[inds,]
 df_ts <- xts(df[,-1], order.by = as.Date(df[["date"]]))
-forecast::autoplot(df_ts, facets = FALSE)
+forecast::autoplot(df_ts, facets = FALSE) + 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
 ```
 
 
-## Avaliação do PSF
+## Avaliação
 
 
-Selecionamos algumas métricas para realizar uma avaliação quantitativa do `PSF` no posto 74.
+A avaliação do desempenho do PSF para os últimos 24 meses considera as seguintes métricas estatísticas: erro médio absoluto (MAE), raiz quadrada do erro méio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
 
 ```{r}
-# Seleciona apenas alguns índices
-pos_stat_inds <- c(1:2, 4:6, 9, 17, 19:20) 
-hydroGOF::gof(
+# seleciona índices de interesse
+# ctrl+alt+c
+pos_stat_inds <- c(2, 4:6, 9, 17, 19:20) 
+
+stat_eval <- hydroGOF::gof(
   sim = df_ts$qnat_pred, 
   obs = df_ts$qnat_obs)[pos_stat_inds,]
+stat_eval
+#names(stat_eval)
 ```
 
-Podemos avaliar a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) após dez iterações para obter uma resposta mais robusta do desempenho das predições feitas pelo PSF.
+Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
 
+O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos.
+Portanto diferente soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
+
+> Como comentado no [livro](https://books.google.com/books?id=7l0sCQAAQBAJ&pg=PA163&lpg=PA163&dq=number%20of%20initial%20configurations%20kmena&source=bl&ots=n0nhiF0BwY&sig=1fBoasnqNNnZcyc1PhfhLJMSFfA&hl=en&sa=X&ved=0ahUKEwje4_O7habVAhXExFQKHSvqD60Q6AEIVDAH#v=onepage&q=number%20of%20initial%20configurations%20kmena&f=false) as iterações podem ser feitas com o parâmetro `nstart`diretamente na função `stats::kmeans()` e recomendam `nstart = 25`. A função retornará o melhor resultado. Porque ele não usou isso?
 
 ```{r}
 obs_74 <- df$qnat_obs
-metricas74 <- NULL
+niter <- 10
+metricas74 <- rep(NA, niter)
 
-for(i in 1:10)
-{
+for (i in 1:niter) {
   # i = 1
-  set.seed(i)
+
   # PSF
   psf_model <- psf(data_train[["qnat_obs"]],
-                   k = 3:20,
-                   w = 1:10,
-                   cycle = 12)
-  preds <- predict(psf_model, 
-                   n.ahead = 12 * length(leave_out))
+    k = 3:20,
+    w = 1:10,
+    cycle = 12
+  )
+  preds <- predict(psf_model,
+    n.ahead = 12 * length(leave_out)
+  )
   # Erro do PSF
- # metricasx[i] <-  sqrt(mean((df_ts$qnat_obs- preds)^2))
-  metricas74[i] <- KGE(sim = preds,
-                       obs = obs_74)
+  # metricasx[i] <-  sqrt(mean((df_ts$qnat_obs- preds)^2))
+  metricas74[i] <- KGE(
+    sim = preds,
+    obs = obs_74
+  )
 }
-
 
 (KGE74_psf <- mean(metricas74))
 ```
 
+> Daqui para baixo sugiro colocar em outro RMD.
 
-
-## Aplicação do PSF a outros postos da ONS
+## Aplicação do PSF para os principais postos da ONS
 
 
 ```{r}
 # Média mensal das observações de vazão para todos os postos
 qnat_mly <- qnat_data %>% 
-  apply_cmonth(.) %>% 
+  apply_cmonth(., ndays_thresh = 28) %>% 
   group_by(code_stn) %>% 
   nest() %>% 
   mutate(
@@ -246,8 +270,7 @@ qnat_mly <- qnat_data %>%
 
 # Dados de treinamento (sem últimos dois anos)
 train_qmly <- qnat_mly  %>% 
-  mutate(data = map(data, get_traindt))
-
+  mutate(data = map(data, get_traindt, yrs = 2))
 
 # Dados para avaliação do PSF 
 test_qmly <- qnat_mly %>% 
@@ -257,19 +280,26 @@ test_qmly <- qnat_mly %>%
 # Vazão simulada (resultados reprodutíveis)
 preds_qmly <- train_qmly %>% 
   mutate(qnat_pred = map(data,
-                         ~psf_reprod(.x, ret = "preds"))) 
+                         ~psf_reprod(.x, n = 24, predict = TRUE)
+                         )
+         )
+```
 
+
+
+```{r}
 # Predições e observações
-pobs_qmly <- preds_qmly %>% 
-  inner_join(.,
-             test_qmly,
-             by = "code_stn") %>% 
-  select(-data) %>% 
-  unnest()
+pobs_qmly <- inner_join(
+  select(preds_qmly, -data),
+  test_qmly,
+  by = "code_stn"
+) %>% 
+  unnest(cols = -code_stn)
 
+#groups(pobs_qmly)
 
-aval_qmly <- pobs_qmly %>% 
-  group_by(code_stn) %>%
+aval_qmly <- pobs_qmly %>% #groups()
+  #group_by(code_stn) %>%
   summarise(mKGE = KGE(sim = qnat_pred, obs = qnat_obs),
             mPBIAS = pbias(sim = qnat_pred, obs = qnat_obs),
             mNSE = NSE(sim = qnat_pred, obs = qnat_obs),
@@ -279,7 +309,30 @@ aval_qmly <- pobs_qmly %>%
             ) %>% 
   arrange(-mKGE)
 
-print(aval_qmly)
+aval_qmly
+```
+
+```{r}
+metrics_df <- aval_qmly %>%
+  mutate(code_stn = factor(code_stn, levels = code_stn[order(mKGE)]),
+         RMSE = NULL) %>%
+  #filter(mKGE >= 0.3 | mNSE >= 0.5) %>%
+  pivot_longer(
+    cols = -c(code_stn),
+    names_to = "metric",
+    values_to = "valor"
+  )
+aval_qmly %>%
+  select(-RMSE) %>%
+  filter(mKGE >= 0.3) %>%
+  summarise(across(-code_stn, .fns = list(min = min), .names = "{.col}_{.fn}"))
+  
+
+metrics_df %>%
+ggplot(aes(x = code_stn, y = valor)) +
+  geom_col() + 
+  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(metrics_df$metric)) + 
+  theme(axis.text.x = )
 ```
 
 
@@ -297,7 +350,7 @@ print(aval_qmly)
 #   )
 # end_time <- Sys.time() # Demorou 8.775542 mins
 
-#saveRDS(ensemble_postos_all, file = here('doc', 'ensemble_all.rds'))
+#saveRDS(ensemble_postos_all, file = here('output', 'ensemble_all.rds'))
 esb_qmly <- readRDS(here('doc', 'ensemble_all.rds'))
 
 # Predições e observações do ensemble
@@ -313,7 +366,7 @@ pobqmly_esb <- esb_qmly %>%
              test_qmly,
              by = "code_stn") %>% 
   select(qnat_obs,qnat_mpred,qnat_mpar) %>% 
-  unnest() 
+  unnest(cols = -code_stn) 
 
 
 
@@ -322,76 +375,110 @@ aval_ensemble <- pobqmly_esb %>%
             KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
             mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
             mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
-            mNSE(sim = qnat_mpred, obs = qnat_obs)
+            mNSE = mNSE(sim = qnat_mpred, obs = qnat_obs)
   ) %>% 
   arrange(-KGE_mpred)
 
 (aval_ensemble)
 ```
 
+Gráfico do posto com melhor KGE
 
-Comparação das predições do modelo PSF para os anos de 2017 e 2018 com os valores observados de vazão naturalizada para o posto 287 da ONS.
 
 ```{r}
 # Gráfico 
 qnat_posto287 <- pobqmly_esb %>% 
-  sel_station(.,287) %>% 
+  sel_station(.,station = 287) %>% 
   select(date,qnat_obs,qnat_mpred)# melhor KGE usando qnat_mpred
 
 posto287_xts <- xts(qnat_posto287[,c("qnat_obs","qnat_mpred")], 
                    order.by = as.Date(qnat_posto287[["date"]]))
-forecast::autoplot(posto287_xts, facets = FALSE)
+forecast::autoplot(posto287_xts, facets = FALSE)+ 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
 ```
 
 
-## Validação cruzada aplicada ao posto 287 considerando um horizonte de um ano
+## Validação cruzada aplicada ao posto 287
 
 ```{r}
-qnatmly_287 <- qnat_mly %>% # dados completos
+qnatmly_287 <- qnat_mly %>% 
   sel_station(.,287) %>% 
   unnest() %>% 
   ungroup() %>% 
   select(date,qnat_obs)
+summary(qnatmly_287)
 
 # Dados de treinamento sem o último ano
 train287_qmly <- get_traindt(qnatmly_287,yrs = 1)
+summary(train287_qmly)
 
 # Dados para avaliação do PSF 
 test287_qmly <- get_testdt(qnatmly_287,n = 12)
+summary(test287_qmly)
+```
 
+Explique o que está sendo feito ... 
+
+> muito interessante o pacote ModelTime! Show este timetk, não conhecia! Vamos dar uma olhada nisso posteriormente.
+
+```{r}
 resample_spec <- time_series_cv(data = qnatmly_287,
                                 assess      = "12 months",# df teste inicial
                                 skip        = "12 months",
                                 cumulative  = TRUE,
-                                slice_limit = 40) # valor ótimo 40
+                                slice_limit = 5) 
 
 
-qmly287_slices <- resample_spec %>% tk_time_series_cv_plan() %>%
-  nest(date,qnat_obs) %>% 
+qmly287_slices <- resample_spec %>% 
+  tk_time_series_cv_plan() %>%
+  nest(date, qnat_obs) %>% 
   pivot_wider(names_from = .key,values_from = data)
 
 # Predições usando um horizonte de 12 meses
 cv287_qmly <- qmly287_slices %>% 
   mutate(
+    qnat_pred = map(training,
+                    ~psf_reprod(.x, n = 12)),
     model = map(training,
-                ~psf_reprod(.x,n = 12, ret = "model") # para extrair os parâmetros
+                #~psf_reprod(.x,n = 12, ret = "model")
+                ~psf_reprod(.x, n = 12, predict = FALSE)
                 ),
-    cvparams = map(model,get_cvpar) # extrai os parâmetros k e w 
+    cvparams = map(model,get_cvpar)
   )
 
-# Parâmetros k e w médios
-# Soma os elementos dos vetores e divide pelo número de slices
+# Parâmetros k e w
+# tinha esquecido que são numeros discretos, melhor usar a moda!
+# Mas analise os resultados e veja se eles fazem sentido
+
 cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
                     /length(cv287_qmly[["cvparams"]]),0)
+# cv287_qmly[["cvparams"]]
+# k  w
+# 2  4?
 
+# usar a MODA!
+moda <- function(x){
+  which.max(tabulate(x))
+}
 
+cvm_params <- cv287_qmly[["cvparams"]] %>%
+  map_dfr(~.x) %>%
+  summarise(across(c(k, w), moda))
+#cvm_params
+# 2  5
 
-# Os parâmetros médios obtidos na validação cruzada são aplicados no modelo 
+# Qual o propósito disso? não teria que aplicar ao cv287_qmly[["testing"]]?
 preds287_qmly <- psf_cvparam(train287_qmly,
-                             params = cvm_params)
+                             n = 12,
+                             params = cvm_params
+                             )
 
-# As predições são adicionadas aos valores observados 
-pobs287_qmly <- mutate(test287_qmly,
+pobs287_qmly <- mutate(train287_qmly,
                   qnat_pred = NA,
                   qnat_pred = replace(qnat_pred,
                     values = preds287_qmly
@@ -403,116 +490,5 @@ avalcv_287 <- pobs287_qmly %>%
   ) 
 (avalcv_287)
 ```
-
-```{r}
-cv287_xts <- xts(pobs287_qmly[,c("qnat_obs","qnat_pred")], 
-                   order.by = as.Date(pobs287_qmly[["date"]]))
-forecast::autoplot(cv287_xts, facets = FALSE)
-```
-
-## Validação cruzada aplicada aos postos que apresentaram os melhores KGE 
-
-
-```{r}
-qnatmly_cv <- qnat_mly %>% # dados completos
- dplyr::filter(code_stn == 287|
-               code_stn == 295|
-               code_stn == 145|
-               code_stn == 281|
-               code_stn == 278|
-               code_stn == 291|
-               code_stn == 279|
-               code_stn == 99|
-               code_stn == 277|
-               code_stn == 190)
-
-traincv_qmly <- qnatmly_cv %>% 
-  mutate(
-    data = map(data,
-               ~get_traindt(.x,yrs = 1))
-  )
-                  
-testecv_qmly <- qnatmly_cv %>% 
-  mutate(
-    data = map(data,
-               ~get_testdt(.x,n = 12))
-  )
-
-
-# Simplificar
-slicescv_qnatmly <- traincv_qmly %>% 
-mutate(
-  slices = map(data,
-              ~time_series_cv(.x,
-                assess = "12 months",
-                skip = "12 months",
-                cumulative = TRUE,
-                slice_limit = 20)),
-  slices_plan = map(slices,tk_time_series_cv_plan),
-  nested_slices = map(slices_plan,
-                      ~nest(.,date,qnat_obs)),
-  wider_slices = map(nested_slices,
-                     ~pivot_wider(.,
-                                  names_from = .key,
-                                  values_from = data))
-)
-
-
-# Parâmetros de cada slice agrupados pelo código do posto
-# Para reduzir tempo de simulação, diminuir o número de slices
-wqnatmly_cv <- slicescv_qnatmly  %>% 
-  select(wider_slices) %>% 
-  unnest() %>% 
-  mutate(
-    model = map(training,
-                ~psf_reprod(.x,n = 12, ret = "model") # para extrair os parâmetros
-                ),
-    cvparams = map(model,get_cvpar), # extrai os parâmetros k e w 
-  ) %>% 
-  select(code_stn,cvparams) %>% 
-  group_by(code_stn)
-
-
-# Parâmetros médios de k e w de cada posto
-wqnat_cvmpar <- wqnatmly_cv %>% 
-  nest() %>% 
-  mutate(
-    cvm_params = map(data,getcv_mpar)
-  ) %>% 
-  select(cvm_params)
-
-
-# Vazão prevista usando os parâmetros médios retornados na validação cruzada
-preds_cvqmly <- train_qmly %>% 
-  inner_join(.,
-             wqnat_cvmpar,
-             by = "code_stn") %>% 
-  mutate(qnat_cvpred = map(data,
-                         ~ensemble_mpar(.x,cvm_params,n = 12))) %>% 
-  select(qnat_cvpred)
-
-# Predições e observações agrupadas pelos postos
-pobscv_qmly <- preds_cvqmly %>% 
-  inner_join(
-    .,
-    testecv_qmly,
-    by = "code_stn"
-  ) %>% unnest() %>% 
-  select(code_stn,date,everything())
-
-
-avalcv_qmly <- pobscv_qmly %>% 
-  summarise(KGE = KGE(sim = qnat_cvpred, obs = qnat_obs),
-            PBIAS = pbias(sim = qnat_cvpred, obs = qnat_obs),
-            NRMSE = nrmse(sim = qnat_cvpred, obs = qnat_obs),
-            NSE = NSE(sim = qnat_cvpred, obs = qnat_obs),
-            RMSE = ModelMetrics::rmse(actual = qnat_obs,
-                                      predicted = qnat_cvpred)           
-  ) %>% 
-  arrange(-KGE)
-
-(avalcv_qmly)
-```
-
 
 
