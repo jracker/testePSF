@@ -1,9 +1,10 @@
 
-#' Count valid data
+
+#' Contabiliza observações válidas
 #'
-#' @param x a numeric vector
+#' @param x vetor numérico
 #'
-#' @return total non-missing values of x.
+#' @return total de observações não faltantes em x.
 #'
 nvalid <- function(x) {
   # if(all(is.na(x))) return(0)
@@ -11,109 +12,135 @@ nvalid <- function(x) {
 }
 
 
-#' Calculate the data mean
+
+#' Média com tratamento para caso de todos dados faltantes
 #'
 #' @param x a numeric vector
 #'
 #' @return mean value of x
 #'
 
-mean_wise <- function(x){
-  if(all(is.na(x))) return(NA)
+mean_wise <- function(x) {
+  if (all(is.na(x))) {
+    return(NA)
+  }
   mean(x, na.rm = TRUE)
 }
 
-#' Select a hydroelectric station
+#' Seleciona dados de um posto
 #'
 #' @param df a tibble or data frame
 #' @param station station code
 #' @return tibble or data frame of the selected station
 #'
-
-sel_station <- function(df,station){
+sel_station <- function(df, station) {
   # Função para selecionar um posto específico via código
-  df %>% 
-    dplyr::filter(code_stn == station) 
+  df %>%
+    dplyr::filter(code_stn == station)
 }
 
-
-apply_cmonth <- function(df){
-  # Função para filtrar os meses completos dos dados 
-  df <- df %>% 
-    dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
+#' Filtra os meses completos dos dados
+apply_cmonth <- function(df, ndays_thresh = 28) {
+  df <- df %>%
+    dplyr::group_by(date = floor_date(date, "month"), code_stn) %>%
     dplyr::summarise(
-      qnat_obs = mean_wise(qnat), 
-      valid = nvalid(qnat), 
+      qnat_obs = mean_wise(qnat),
+      valid = nvalid(qnat),
       N = n(),
       .groups = "drop"
     ) %>%
-    dplyr::filter(valid >= 28) %>% 
-    select(date,code_stn,qnat_obs)
+    dplyr::filter(valid >= ndays_thresh) %>%
+    select(date, code_stn, qnat_obs)
   return(df)
 }
 
-get_cyears <- function(df){
-  # Função para pegar os anos completos dos dados
-  cyrs <- df %>% 
-    group_by(ano = lubridate::year(date)) %>% 
-    tally() %>% 
-    filter(n == 12) %>% 
+#' Identifica anos completos, ou seja com 12 meses de observações válidas.
+get_cyears <- function(df) {
+  cyrs <- df %>%
+    group_by(ano = lubridate::year(date)) %>%
+    tally() %>%
+    filter(n == 12) %>%
     pull(ano)
   return(cyrs)
 }
 
-apply_cyears  <- function(df){
-  # Função para filtrar os dados com anos completos
+#' Filtragem dos dados com anos completos
+apply_cyears <- function(df) {
+
   # Usar depois de agrupar os dados caso selecionado mais de um posto
   cyrs <- get_cyears(df)
-  df_cyrs <- df %>% 
+  df_cyrs <- df %>%
     filter(lubridate::year(date) %in% cyrs)
   return(df_cyrs)
 }
 
-
-get_traindt <- function(df, yrs = 2){
-  # Função para pegar os dados de treinamento
-  # Padrão: 2 últimos anos de observações são removidos
+#' Seleciona dados de treinamento para aplicação do PSF
+#'
+#' @param df data frame com série mensal dos dados de vazão
+#' @param yrs número de anos que serão removidos das observações para teste do PSF.
+#' Valor pré-definido como 2 anos.
+get_traindt <- function(df, yrs = 2) {
   cyrs <- get_cyears(df)
-  leave_out <- tail(cyrs,n = yrs) # retira 2 últ. anos por padrão
-  data <- df %>% 
+  leave_out <- tail(cyrs, n = yrs)
+  data <- df %>%
     filter(!lubridate::year(date) %in% leave_out)
   return(data)
 }
 
 
-get_testdt <- function(df,n = 24){
-  # Função para pegar os dados de teste
-  # Padrão: 2 últimos anos de observações são usados como teste
+#' Selecionar dados de teste para avaliação do PSF
+#'
+#' @param df data frame com dados de vazão mensal
+#' @param n número de meses à frente. Pré-definido como 24.
+#'
+#' @return data frame com dados do período de teste
+#' @export
+#'
+#' @examples
+get_testdt <- function(df, n = 24) {
   inds <- (nrow(df) - n + 1):(nrow(df))
-  df <- df[inds,] %>% 
-    select(date,qnat_obs)
+  df <- df[inds, ] %>%
+    select(date, qnat_obs)
 }
 
 
-psf_reprod <- function(df, n = 24, ret = "preds"){
-  # Função para aplicar o psf, retorna as predições do modelo
+#' Aplica PSF e retorna o modelo ou suas previsões
+#'
+#' @param df 
+#' @param n 
+#' @param predict 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+psf_reprod <- function(df, n = 24, predict = TRUE) {
+  
   set.seed(1) # p/ reprodutibilidade
-  model <- psf(df[,"qnat_obs"],cycle = 12) 
-  preds <- predict(model,n.ahead = n) 
-  if (ret == "preds") return(preds) else return(model)
+  
+  model <- psf(df[, "qnat_obs"], cycle = 12)
+  preds <- predict(model, n.ahead = n)
+  
+  if (predict) return(preds)
+  
+  model
+  
 }
 
-psf4ensemble <- function(df,n = 24){
+psf4ensemble <- function(df, n = 24) {
   # Função para aplicar o psf para ensemble
-  model <- psf(df[,"qnat_obs"],cycle = 12)
-  preds <- predict(model,n.ahead = n) 
+  model <- psf(df[, "qnat_obs"], cycle = 12)
+  preds <- predict(model, n.ahead = n)
   return(preds)
 }
 
 
 
-ensemble_preds <- function(df){
+ensemble_preds <- function(df, niter = 5) {
   # Retorna uma lista com as predições do psf com difs seeds
   list_preds <- list()
   # list_model <- list()
-  for(i in 1:5){
+  for (i in 1:niter) {
     set.seed(i)
     list_preds[[i]] <- psf4ensemble(df)
   }
@@ -122,47 +149,47 @@ ensemble_preds <- function(df){
 
 
 
-ensemble_models <- function(df){
+ensemble_models <- function(df, niter = 5) {
   # Retorna uma lista com os modelos do psf com difs seeds
   list_model <- list()
-  for(i in 1:5){
+  for (i in 1:niter) {
     set.seed(i)
-    model <- psf(df[,"qnat_obs"],cycle = 12)
+    model <- psf(df[, "qnat_obs"], cycle = 12)
     list_model[[i]] <- model
   }
   return(list_model)
-  
 }
 
-ensemble_mpar <- function(df,params,n = 24){
+ensemble_mpar <- function(df, params, n = 24) {
   # Retorna predições feitas com os valores médios de k e w
   # extraídos usando a função get_mpar
   set.seed(1)
-  model <- psf(df[,"qnat_obs"],
-               k = params[[1]][[1]],
-               w = params[[1]][[2]],
-               cycle = 12)
-  pred <- predict(model,n.ahead = n)
+  model <- psf(df[, "qnat_obs"],
+    k = params[[1]][[1]],
+    w = params[[1]][[2]],
+    cycle = 12
+  )
+  pred <- predict(model, n.ahead = n)
   return(pred)
 }
 
-get_mpar <- function(modelo){
+get_mpar <- function(modelo, niter = 5) {
   # Média dos parâmetros k e w dos modelos
   list_k <- list()
   list_w <- list()
-  teste <- for(i in 1:5){
+  teste <- for (i in 1:niter) {
     list_k[[i]] <- modelo[[i]]$k
     list_w[[i]] <- modelo[[i]]$w
   }
   # Usar apenas números inteiros no modelo
-  k_mean <-  round(Reduce("+",list_k)/length(list_k),0)
-  w_mean <- round(Reduce("+",list_w)/length(list_w),0)
+  k_moda <- round(Reduce("+", list_k) / length(list_k), 0)
+  w_moda <- round(Reduce("+", list_w) / length(list_w), 0)
   list_param <- list()
-  list_param[[1]] <- c(k_mean,w_mean)
+  list_param[[1]] <- c(k_mean, w_mean)
 }
 
 
-get_mpred <- function(lista){
+get_mpred <- function(lista) {
   # Faz a média das predições dos modelos retornados pelo ensemble
   pred_mean <- list(
     rowMeans(as.data.frame(lista))
@@ -172,34 +199,19 @@ get_mpred <- function(lista){
 
 # For time series cross validation -----------------------------
 
-get_cvpar <- function(model){
+get_cvpar <- function(model) {
   # Parâmetros após validação cruzada
-  # Extrai um nível da lista
-  unl_model <- unlist(model,recursive = FALSE)
-  params_psf <- c(unl_model$k,unl_model$w)
+  unl_model <- unlist(model, recursive = FALSE)
+  params_psf <- c(k = unl_model$k, w = unl_model$w)
 }
 
-getcv_mpar <-  function(df){
-  # Extrai parâmetros médios k e w após a validação cruzada
-  # Returna um vetor atômico 
-  param_values <- list()
-  for(i in 1:1){
-    teste <- round(rowMeans(as.data.frame(df[[i]])),0)
-    param_values[[i]] <-  unlist(teste, recursive = FALSE)
-  }
-  return(unlist(param_values,recursive = FALSE))
-}
-
-
-psf_cvparam <- function(df,params){
-  # Usar para cv de um único posto, para avaliar mais de um posto usar
-  # função ensemblem_par
+psf_cvparam <- function(df, n = 12, params = NULL) {
+  # df = train287_qmly; n = 12; params = cvm_params
   set.seed(1)
-  model <- psf(df[,"qnat_obs"],
-               k = params[1],
-               w = params[2],
-               cycle = 12)
-  preds <- predict(model,n.ahead = 12)
+  model <- psf(df[["qnat_obs"]],
+    k = params[[1]],
+    w = params[[2]],
+    cycle = 12
+  )
+  preds <- predict(model, n.ahead = n)
 }
-
-
