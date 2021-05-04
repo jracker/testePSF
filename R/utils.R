@@ -11,6 +11,10 @@ nvalid <- function(x) {
   sum(!is.na(x))
 }
 
+# Calcula a moda 
+moda <- function(x){
+  which.max(tabulate(x))
+}
 
 
 #' Média com tratamento para caso de todos dados faltantes
@@ -165,8 +169,8 @@ ensemble_mpar <- function(df, params, n = 24) {
   # extraídos usando a função get_mpar
   set.seed(1)
   model <- psf(df[, "qnat_obs"],
-    k = params[[1]][[1]],
-    w = params[[1]][[2]],
+    k = params[[1]][1],
+    w = params[[1]][2],
     cycle = 12
   )
   pred <- predict(model, n.ahead = n)
@@ -174,18 +178,29 @@ ensemble_mpar <- function(df, params, n = 24) {
 }
 
 get_mpar <- function(modelo, niter = 5) {
+  
+  # modelo <- pobqmly_esb$models[[1]]; niter = 5
+  
   # Média dos parâmetros k e w dos modelos
-  list_k <- list()
-  list_w <- list()
-  teste <- for (i in 1:niter) {
-    list_k[[i]] <- modelo[[i]]$k
-    list_w[[i]] <- modelo[[i]]$w
-  }
+  # list_k <- list()
+  # list_w <- list()
+  # for (i in 1:niter) {
+  #   list_k[[i]] <- modelo[[i]]$k
+  #   list_w[[i]] <- modelo[[i]]$w
+  # }
   # Usar apenas números inteiros no modelo
-  k_moda <- round(Reduce("+", list_k) / length(list_k), 0)
-  w_moda <- round(Reduce("+", list_w) / length(list_w), 0)
-  list_param <- list()
-  list_param[[1]] <- c(k_mean, w_mean)
+  #k_mean <- round(Reduce("+", list_k) / length(list_k), 0)
+  #w_mean <- round(Reduce("+", list_w) / length(list_w), 0)
+  
+  tibble(
+    k = map_dbl(modelo, "k"), 
+    w = map_dbl(modelo, "w")
+  ) %>%
+    #map_dfr(~.x) %>%
+    summarise(across(c(k, w), moda))
+  
+  #list_param <- list()
+  #list_param[[1]] <- c(k_mean, w_mean)
 }
 
 
