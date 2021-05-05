@@ -1,0 +1,257 @@
+---
+title: "Aplicação do algoritmo PSF a séries de vazão naturalizada"
+author: "Jerônimo Acker D'Ornellas"
+date: "05/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#rm(list = ls())
+knitr::opts_chunk$set(
+  #echo = FALSE,
+  comment = "#>",
+  collapse = TRUE
+)
+```
+
+## Objetivo 
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+
+```{r, message=FALSE}
+if(!require(PSF)) install.packages("PSF")
+if(!require(timetk)) remotes::install_github("business-science/timetk")
+# tive que usar o tidyr do github
+# por causa de erro no unnest()
+#  Error: Input must be list of vectors
+# remotes::install_github("tidyverse/tidyr")
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF",
+  "ModelMetrics",
+  "forecast",
+  "timetk"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+
+### Dados de vazão
+
+Os dados importados de vazão devem ser regularmente espaçados no tempo. Esta adequação das séries diárias, se necessária, pode ser realizada com a função `complete_dates()` do pacote **`{lhmetools}`**. Assim assegura-se que todas estações possuam 1 observação por dia e sem datas faltantes.
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+```
+
+Os dados importados precisam filtrados para o posto de interesse: posto 74 da ONS (G. B. Munhoz).
+
+```{r}
+posto <- 74
+qnat_posto <- qnat_data %>% 
+  dplyr::filter(code_stn == posto)
+glimpse(qnat_posto)
+```
+
+
+Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com pelo menos 28 observações válidas e anos completos.
+
+```{r}
+# Seleciona observações com pelo menos 28 observações válidas no mês
+qnat_posto_mly <- qnat_posto %>% 
+  dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
+  dplyr::summarise(
+    qnat_obs = mean_wise(qnat), 
+    valid = nvalid(qnat), 
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(valid >= 28) 
+
+# check
+#str(qnat_posto_mly)
+# qnat_posto_mly %>% 
+#   lhmetools::complete_dates(group = "code_stn", time_step = # "month") %>%
+#   str()
+```
+
+Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF.
+
+```{r}
+# Anos completos
+anos_comp <- qnat_posto_mly %>%
+  group_by(ano = lubridate::year(date)) %>%
+  tally() %>%
+  filter(n == 12) %>%
+  pull(ano) 
+# Usa apenas as observações dos anos completos
+qnat_posto_mly <- qnat_posto_mly %>%
+  filter(lubridate::year(date) %in% anos_comp)
+# check
+#qnat_posto_mly %>%
+#  filter(valid != N)
+# Seleciona apenas a data e as observações de vazão 
+qnat_posto_mly <- qnat_posto_mly %>%
+  select(date, qnat_obs)
+
+# check
+head(qnat_posto_mly)
+tail(qnat_posto_mly)
+stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
+#nrow(qnat_posto_mly) %/% 12
+```
+
+
+### Aplicação do algoritmo PSF
+
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente no RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Nesse sentido, iremos verificar o desempenho desta técnica para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho. 
+
+```{r}
+#PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
+# dados de : 2017 e 2018
+(leave_out <- tail(anos_comp, n = 2))
+data_train <- qnat_posto_mly %>%
+  filter(!lubridate::year(date) %in% leave_out)
+```
+
+
+O treinamento do modelo no pacote `PSF` é feito através da função `psf` que requer como entrada uma série temporal univariada em um formato numérico. Além disso, é possível especificar os parâmetros: `k`,`w` e `cycle`. O parâmetro `cycle` corresponde ao número de valores de um ciclo na série temporal e deve ser adicionado caso os dados não estejam no formato `ts` (série temporal). 
+
+```{r}
+# Os dados não estão no formato ts (série temporal)
+(is.ts(data_train))
+```
+
+
+A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros `k` e `w` que correspondem ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência e são, portanto, bastante importantes no desempenho das previsões. Ambos os parâmetros podem ser especificados por uma sequência de valores e a função `psf` irá se encarregar de selecionar o valor ótimo.
+
+```{r}
+# Treinamento do modelo
+set.seed(123)
+modelo_munhoz <- psf(
+  data_train[["qnat_obs"]],
+  k = 3:20,
+  w = 1:10,
+  cycle = 12
+)
+```
+
+Com o modelo treinado podemos prever para o período de teste usando: 
+
+```{r}
+# teste: previsão de vazão para 2017 e 2018
+pred_munhoz <- predict(modelo_munhoz,
+                       n.ahead = 12 * length(leave_out)
+                       )
+# Comparação dos valores observados e previstos para os dois últimos anos
+plot(modelo_munhoz, pred_munhoz)
+```
+
+
+As previsões do PSF podem ser adicionadas aos dados originais.
+
+```{r}
+inds <- (nrow(data_train) + 1):(nrow(data_train) + (12 * length(leave_out)))
+nrow(qnat_posto_mly) == max(inds)
+
+qnat_posto_mly_pred <- mutate(qnat_posto_mly,
+  qnat_pred = NA,
+  qnat_pred = replace(qnat_pred,
+    list = inds,
+    values = pred_munhoz
+  )
+)
+tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
+```
+
+
+
+```{r}
+df <- qnat_posto_mly_pred[inds,]
+df_ts <- xts(df[,-1], order.by = as.Date(df[["date"]]))
+forecast::autoplot(df_ts, facets = FALSE) + 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
+
+```
+
+
+## Avaliação
+
+
+A avaliação do desempenho do PSF para os últimos 24 meses considera as seguintes métricas estatísticas: erro médio absoluto (MAE), raiz quadrada do erro méio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
+
+```{r}
+# seleciona índices de interesse
+# ctrl+alt+c
+pos_stat_inds <- c(2, 4:6, 9, 17, 19:20) 
+
+stat_eval <- hydroGOF::gof(
+  sim = df_ts$qnat_pred, 
+  obs = df_ts$qnat_obs)[pos_stat_inds,]
+stat_eval
+#names(stat_eval)
+```
+
+Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
+
+O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos.
+Portanto diferente soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
+
+> Como comentado no [livro](https://books.google.com/books?id=7l0sCQAAQBAJ&pg=PA163&lpg=PA163&dq=number%20of%20initial%20configurations%20kmena&source=bl&ots=n0nhiF0BwY&sig=1fBoasnqNNnZcyc1PhfhLJMSFfA&hl=en&sa=X&ved=0ahUKEwje4_O7habVAhXExFQKHSvqD60Q6AEIVDAH#v=onepage&q=number%20of%20initial%20configurations%20kmena&f=false) as iterações podem ser feitas com o parâmetro `nstart`diretamente na função `stats::kmeans()` e recomendam `nstart = 25`. A função retornará o melhor resultado. Porque ele não usou isso?
+
+```{r}
+obs_74 <- df$qnat_obs
+niter <- 10
+aval74_kge <- rep(NA, niter)
+
+for (i in 1:niter) {
+  # i = 1
+
+  # PSF
+  psf_model <- psf(data_train[["qnat_obs"]],
+    k = 3:20,
+    w = 1:10,
+    cycle = 12
+  )
+  preds <- predict(psf_model,
+    n.ahead = 12 * length(leave_out)
+  )
+  
+  aval74_kge[i] <- KGE(
+    sim = preds,
+    obs = obs_74
+  )
+}
+
+(KGE74_psf <- mean(aval74_kge))
+```
