@@ -69,7 +69,7 @@ glimpse(qnat_data)
 ## Verificação reprodutibilidade do PSF
 
 
-Treinamento do modelo e as predições usando do dataset `sunspot`.
+Treinamento do modelo e as predições usando o dataset `sunspot`.
 
 ```{r}
 # Dados de treinamento

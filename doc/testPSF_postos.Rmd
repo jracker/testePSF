@@ -27,7 +27,7 @@ Pacotes necessários:
 
 
 ```{r, message=FALSE}
-if(!require(PSF)) remotes::install_github("neerajdhanraj/PSF")
+if(!require(PSF)) install.packages("PSF")
 if(!require(timetk)) remotes::install_github("business-science/timetk")
 # tive que usar o tidyr do github
 # por causa de erro no unnest()
@@ -103,7 +103,7 @@ qnat_posto_mly <- qnat_posto %>%
 #   str()
 ```
 
-Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da de aplicação do PSF.
+Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF.
 
 ```{r}
 # Anos completos
@@ -132,26 +132,36 @@ stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
 
 ### Aplicação do algoritmo PSF
 
-Explicar o que e porquê está sendo feito isso. Para testar o PSF é necessário ... período de treino e teste ... 2 anos ...
+O PSF é uma técnica para previsão de séries temporais univariadas e 
+assume que há um padrão na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior a técnicas como ARIMA  e ANN no contexto de preço e demanda de energia elétrica. 
 
-
+Iremos verificar o desempenho da técnica de previsão para a série hidrológica do posto 74 da ONS (G. B. Munhoz) selecionando como dados de treinamento as observações do período de 1969-2016. As observações dos dois últimos anos (2017 e 2018) serão usadas para teste ou verificação do desempenho do modelo.
+  
+  
 ```{r}
 #PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
-# dados de treino: 2017 e 2018
+# dados de : 2017 e 2018
 (leave_out <- tail(anos_comp, n = 2))
 data_train <- qnat_posto_mly %>%
   filter(!lubridate::year(date) %in% leave_out)
 ```
 
-O PSF requer a especificação dos parâmetros ... k, w, cycle, pq estes valores ...
+
+O treinamento do modelo no pacote `PSF` é feito através da função `psf()` que requer como entrada uma série temporal univariada em um formato numérico. Além disso, é possível especificar os parâmetros: `k`,`w` e `cycle`. O parâmetro `cycle` corresponde ao número de valores de um ciclo na série temporal e deve ser adicionado caso os dados não estejam no formato `ts`. 
+
+```{r}
+# Os dados não estão no formato de série temporal
+(is.ts(data_train))
+```
+
+O algoritmo `PSF` pode ser descrito em duas etapas: agrupamento e previsões baseadas nesses agrupamentos. Assim, ao aplicá-lo aos dados buscamos analisar se o algoritmo é capaz de encontrar u
+
 
 ```{r}
 # Treinamento do modelo
 set.seed(123)
 modelo_munhoz <- psf(
   data_train[["qnat_obs"]],
-  #n.ahead = 12 * length(leave_out),
-  #k = 2:20,
   k = 3:20,
   w = 1:10,
   cycle = 12
