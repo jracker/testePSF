@@ -148,7 +148,7 @@ O treinamento do modelo no pacote `PSF` é feito através da função `psf` que 
 ```
 
 
-A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros `k` e `w`  correspondem respectivamente ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência. Ambos parâmetros são bastante importantes no desempenho das previsões e podem ser especificados por uma sequência de valores. Nesse caso, a função `psf` irá automaticamente selecionar o valor ótimo dentre a sequência.
+A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros `k` e `w`  correspondem respectivamente ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência. Ambos parâmetros são bastante importantes no desempenho das previsões e podem ser especificados por uma sequência de valores. Nesse caso, a função `psf` irá automaticamente selecionar o valor ótimo da sequência.
 
 ```{r}
 # Treinamento do modelo
@@ -193,15 +193,14 @@ tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
 
 ```{r}
 df <- qnat_posto_mly_pred[inds,]
-df_ts <- xts(df[,-1], order.by = as.Date(df[["date"]]))
-forecast::autoplot(df_ts, facets = FALSE) + 
+df_xts <- xts(df[,-1], order.by = as.Date(df[["date"]]))
+forecast::autoplot(df_xts, facets = FALSE) + 
   ylab("Q") + 
   xlab("meses") +
   theme(
     strip.background = element_blank(), 
     strip.text = element_blank()
   )
-
 ```
 
 
