@@ -76,6 +76,7 @@ glimpse(qnat_data)
 
 ## Aplicação do PSF para os principais postos da ONS
 
+Observam-se dados faltantes na série, então selecionaremos através da função `apply_cmonth` somente os meses com pelo menos 28 observações válidas. Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF através da função `apply_cyears`.
 
 ```{r}
 # Média mensal das observações de vazão para todos os postos
@@ -86,7 +87,13 @@ qnat_mly <- qnat_data %>%
   mutate(
     data = map(data, apply_cyears)
   )
+```
 
+
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente no RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Dessa forma, iremos verificar o desempenho desta técnica para a série hidrológica dos postos da ONS. As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
+
+
+```{r}
 # Dados de treinamento (sem últimos dois anos)
 train_qmly <- qnat_mly  %>% 
   mutate(data = map(data, get_traindt, yrs = 2))
@@ -95,19 +102,20 @@ train_qmly <- qnat_mly  %>%
 test_qmly <- qnat_mly %>% 
   mutate(qnat_obs = map(data,get_testdt)) %>% 
   select(code_stn,qnat_obs)
+```
 
+
+As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod` que assegura, ao definir uma semente, a reprodutibilidade dos resultados.
+
+```{r}
 # Vazão simulada (resultados reprodutíveis)
 preds_qmly <- train_qmly %>% 
   mutate(qnat_pred = map(data,
                          ~psf_reprod(.x, n = 24, predict = TRUE)
                          )
          )
-```
 
-
-
-```{r}
-# Predições e observações
+# Unindo predições e observações de cada posto
 pobs_qmly <- inner_join(
   select(preds_qmly, -data),
   test_qmly,
@@ -115,6 +123,13 @@ pobs_qmly <- inner_join(
 ) %>% 
   unnest(cols = -code_stn)
 
+#groups(pobs_qmly)
+```
+
+
+A avaliação do desempenho do PSF para os últimos 24 meses considera as seguintes métricas estatísticas: erro médio absoluto (MAE), raiz quadrada do erro méio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
+
+```{r}
 #groups(pobs_qmly)
 
 aval_qmly <- pobs_qmly %>% #groups()
