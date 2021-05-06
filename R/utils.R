@@ -125,17 +125,40 @@ psf_reprod <- function(df, n = 24, predict = TRUE) {
   model <- psf(df[, "qnat_obs"], cycle = 12)
   preds <- predict(model, n.ahead = n)
   
-  if (predict) return(preds)
+  if (predict) return(preds) 
   
   model
-  
 }
 
-psf4ensemble <- function(df, n = 24) {
+psf4ensemble <- function(df, n = 24, predict = TRUE) {
   # Função para aplicar o psf para ensemble
   model <- psf(df[, "qnat_obs"], cycle = 12)
   preds <- predict(model, n.ahead = n)
-  return(preds)
+  if (predict) {
+    return(preds)
+  } else {
+    return(model)
+  }
+}
+
+
+
+ensemble_psf <- function(df, niter = 5, predict = TRUE) {
+  list_preds <- list()
+  list_model <- list()
+  if (predict) {
+    for (i in 1:niter) {
+      set.seed(i)
+      list_preds[[i]] <- psf4ensemble(df)
+    }
+    return (list_preds)
+  } else {
+    for (i in 1:niter) {
+      set.seed(i)
+      list_model[[i]] <- psf4ensemble(df, predict = FALSE)
+    }
+    return(list_model)
+  }
 }
 
 
@@ -164,18 +187,19 @@ ensemble_models <- function(df, niter = 5) {
   return(list_model)
 }
 
-ensemble_mpar <- function(df, params, n = 24) {
+ensemble_mpar<- function(df, params, n = 24) {
   # Retorna predições feitas com os valores médios de k e w
   # extraídos usando a função get_mpar
   set.seed(1)
   model <- psf(df[, "qnat_obs"],
-    k = params[[1]][1],
-    w = params[[1]][2],
-    cycle = 12
+               k = params[[1]]["k"][[1]],
+               w = params[[1]]["w"][[1]],
+               cycle = 12
   )
   pred <- predict(model, n.ahead = n)
   return(pred)
 }
+
 
 get_mpar <- function(modelo, niter = 5) {
   
