@@ -146,6 +146,9 @@ aval_qmly <- pobs_qmly %>% #groups()
 aval_qmly
 ```
 
+Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
+
+
 ```{r}
 metrics_df <- aval_qmly %>%
   mutate(code_stn = factor(code_stn, levels = code_stn[order(mKGE)]),
@@ -173,44 +176,56 @@ ggplot(aes(x = code_stn, y = valor)) +
 ## Aplicação do ensemble PSF
 
 
+O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, iremos empregar um
+
+
+
 ```{r}
 # Modelos e predições resultantes de 5 iterações para cada posto
-
 # start_time <- Sys.time()
-# esb_qmly <- train_qmly %>% 
+# esb_qmly <- train_qmly %>%
 #   mutate(
-#     models = map(data,ensemble_models),
-#     preds = map(data,ensemble_preds)
+#     models = map(
+#       data,
+#       ~ ensemble_psf(.x, predict = FALSE)
+#     ),
+#     preds = map(data, ensemble_psf)
 #   )
-# end_time <- Sys.time() # Demorou 8.775542 mins
+# end_time <- Sys.time() # ~9 minutos
 
-#saveRDS(ensemble_postos_all, file = here('output', 'ensemble_all.rds'))
-esb_qmly <- readRDS(here('doc', 'ensemble_all.rds'))
+# saveRDS(esb_qmly, file = here('output', 'esb_qmly.rds'))
+# Carrega o modelo
+esb_qmly <- readRDS(here("output", "esb_qmly.rds"))
 
-# Predições e observações do ensemble
-pobqmly_esb <- esb_qmly %>% 
+pobqmly_esb <- esb_qmly %>%
   mutate(
-    mparam_qmly = map(models,get_mpar), # parâmetros k e w médios
-    qnat_mpred = unlist(map(preds,get_mpred),
-                        recursive = FALSE), # predições médias das iter
-    qnat_mpar = map(train_data, # predições usando k e w médios
-                    ~ensemble_mpar(.x,mparam_qmly))
-  ) %>% 
-   inner_join(.,
-             test_qmly,
-             by = "code_stn") %>% 
-  select(qnat_obs,qnat_mpred,qnat_mpar) %>% 
-  unnest(cols = -code_stn) 
+    mparam_qmly = map(models, get_mpar),
+    # parâmetros k e w médios
+    qnat_mpred = unlist(map(preds, get_mpred),
+      recursive = FALSE
+    ),
+    # predições médias das iter
+    qnat_mpar = map(
+      data, # predições usando k e w médios
+      ~ ensemble_mpar(.x, mparam_qmly)
+    )
+  ) %>%
+  inner_join(.,
+    test_qmly,
+    by = "code_stn"
+  ) %>%
+  select(qnat_obs, qnat_mpred, qnat_mpar) %>%
+  unnest(cols = -code_stn)
 
 
-
-aval_ensemble <- pobqmly_esb %>% 
-  summarise(KGE_mpred = KGE(sim = qnat_mpred, obs = qnat_obs),
-            KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
-            mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
-            mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
-            mNSE = mNSE(sim = qnat_mpred, obs = qnat_obs)
-  ) %>% 
+aval_ensemble <- pobqmly_esb %>%
+  summarise(
+    KGE_mpred = KGE(sim = qnat_mpred, obs = qnat_obs),
+    KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
+    mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
+    mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
+    mNSE = mNSE(sim = qnat_mpred, obs = qnat_obs)
+  ) %>%
   arrange(-KGE_mpred)
 
 (aval_ensemble)
