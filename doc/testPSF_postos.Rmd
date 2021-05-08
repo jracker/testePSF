@@ -19,7 +19,7 @@ knitr::opts_chunk$set(
 
 ## Objetivo 
 
-O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS.
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS. 
 
 ## Pré-requisitos
 
@@ -105,7 +105,7 @@ test_qmly <- qnat_mly %>%
 ```
 
 
-As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod` que assegura, ao definir uma semente, a reprodutibilidade dos resultados.
+As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod`,que garante a reprodutibilidade dos resultados.
 
 ```{r}
 # Vazão simulada (resultados reprodutíveis)
@@ -173,11 +173,30 @@ ggplot(aes(x = code_stn, y = valor)) +
 ```
 
 
+
+
+```{r}
+# Visualização das previsões do posto com melhor KGE
+qnat_posto287 <- pobs_qmly %>% 
+  sel_station(.,station = 287) %>% 
+  select(date,qnat_obs,qnat_pred)
+
+posto287_xts <- xts(qnat_posto287[,c("qnat_obs","qnat_pred")], 
+                   order.by = as.Date(qnat_posto287[["date"]]))
+forecast::autoplot(posto287_xts, facets = FALSE)+ 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
+```
+
+
 ## Aplicação do ensemble PSF
 
 
-O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, iremos empregar um
-
+O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, iremos fazer o  ensemble do PSF rodando cinco iterações e verificaremos se as previsões médias ou as previsões feitas com os parâmetros médios `k` e `w` são capazes de gerar melhores previsões. Inicialmente vamos armazenar as previsões e os parâmetros do modelo gerados em cada iteração utilizando a função `ensemble_psf`.
 
 
 ```{r}
@@ -197,6 +216,13 @@ O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan�
 # Carrega o modelo
 esb_qmly <- readRDS(here("output", "esb_qmly.rds"))
 
+
+```
+
+
+A partir dos modelos gerados em cada iteração iremos extrair a média dos parâmetros críticos para o desempenho das previsões: `k` e `w`. Além disso, também iremos calcular a média das previsões de cada iteração. A previsão utilizando o PSF sem o ensemble também foi incluída, visto que desejamos saber se a **média das previsões** ou se previsões feitas com os **parâmetros médios** irão aumentar a acúrácia do modelo.
+
+```{r}
 pobqmly_esb <- esb_qmly %>%
   mutate(
     mparam_qmly = map(models, get_mpar),
@@ -204,9 +230,10 @@ pobqmly_esb <- esb_qmly %>%
     qnat_mpred = unlist(map(preds, get_mpred),
       recursive = FALSE
     ),
-    # predições médias das iter
+    qnat_pred = map(data,psf_reprod),
+    # previsões médias das iterações
     qnat_mpar = map(
-      data, # predições usando k e w médios
+      data, # previsões usando k e w médios
       ~ ensemble_mpar(.x, mparam_qmly)
     )
   ) %>%
@@ -214,42 +241,66 @@ pobqmly_esb <- esb_qmly %>%
     test_qmly,
     by = "code_stn"
   ) %>%
-  select(qnat_obs, qnat_mpred, qnat_mpar) %>%
+  select(qnat_obs, qnat_mpred, qnat_mpar,qnat_pred) %>%
   unnest(cols = -code_stn)
 
+```
 
-aval_ensemble <- pobqmly_esb %>%
+Usaremos as seguintes métricas estatísticas para avaliar as previsões: erro médio absoluto (MAE), raiz quadrada do erro médio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
+
+```{r}
+aval_esb <- pobqmly_esb %>%
   summarise(
     KGE_mpred = KGE(sim = qnat_mpred, obs = qnat_obs),
     KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
+    KGE_pred = KGE(sim = qnat_pred, obs = qnat_obs),
     mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
     mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
     mNSE = mNSE(sim = qnat_mpred, obs = qnat_obs)
   ) %>%
-  arrange(-KGE_mpred)
+  arrange(-KGE_pred)
 
-(aval_ensemble)
+(aval_esb)
 ```
 
-Gráfico do posto com melhor KGE
 
+Como o KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.Verificaremos qual modelo  apresentou o KGE superior para o maior número de postos.
 
 ```{r}
-# Gráfico 
-qnat_posto287 <- pobqmly_esb %>% 
-  sel_station(.,station = 287) %>% 
-  select(date,qnat_obs,qnat_mpred)# melhor KGE usando qnat_mpred
-
-posto287_xts <- xts(qnat_posto287[,c("qnat_obs","qnat_mpred")], 
-                   order.by = as.Date(qnat_posto287[["date"]]))
-forecast::autoplot(posto287_xts, facets = FALSE)+ 
-  ylab("Q") + 
-  xlab("meses") +
-  theme(
-    strip.background = element_blank(), 
-    strip.text = element_blank()
+metrics_esb <- aval_esb %>%
+  select(code_stn, KGE_mpred, KGE_mpar, KGE_pred) %>%
+  # filter(mKGE >= 0.3 | mNSE >= 0.5) %>%
+  pivot_longer(
+    cols = -c(code_stn),
+    names_to = "metric",
+    values_to = "valor"
   )
+
+bestKGE_esb <- metrics_esb %>%
+  group_by(code_stn) %>%
+  filter(valor >= 0.3) %>%
+  slice(which.max(valor)) %>%
+  ungroup() %>%
+  count(metric)
+
+(metrics_esb)
 ```
+
+Aparentemente a média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica analisada. No entanto, para avaliar se há vantagem em usar este modelo é importante conferir se a diferença foi significativa em relação as previsões feitas sem o ensemble.
+
+```{r}
+difb_esbKGE <- metrics_esb %>%
+  group_by(code_stn) %>%
+  filter(valor >= 0.3) %>%
+  mutate(
+    difb_KGE = max(valor) - min(valor)
+  ) %>%
+  slice(which.max(valor)) %>%
+  arrange(-valor)
+
+(difb_esbKGE)
+```
+
 
 
 ## Validação cruzada aplicada ao posto 287
