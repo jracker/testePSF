@@ -224,7 +224,7 @@ stat_eval
 Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
 
 O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos.
-Portanto diferente soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
+Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
 
 > Como comentado no [livro](https://books.google.com/books?id=7l0sCQAAQBAJ&pg=PA163&lpg=PA163&dq=number%20of%20initial%20configurations%20kmena&source=bl&ots=n0nhiF0BwY&sig=1fBoasnqNNnZcyc1PhfhLJMSFfA&hl=en&sa=X&ved=0ahUKEwje4_O7habVAhXExFQKHSvqD60Q6AEIVDAH#v=onepage&q=number%20of%20initial%20configurations%20kmena&f=false) as iterações podem ser feitas com o parâmetro `nstart`diretamente na função `stats::kmeans()` e recomendam `nstart = 25`. A função retornará o melhor resultado. Porque ele não usou isso?
 
