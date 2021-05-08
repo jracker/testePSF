@@ -130,6 +130,19 @@ psf_reprod <- function(df, n = 24, predict = TRUE) {
   model
 }
 
+
+#' Aplica o PSF e retorna o modelo ou as previsões
+#' Adaptado para uso no ensemble
+#'
+#' @param df 
+#' @param n 
+#' @param predict 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+
 psf4ensemble <- function(df, n = 24, predict = TRUE) {
   # Função para aplicar o psf para ensemble
   model <- psf(df[, "qnat_obs"], cycle = 12)
@@ -140,7 +153,6 @@ psf4ensemble <- function(df, n = 24, predict = TRUE) {
     return(model)
   }
 }
-
 
 
 ensemble_psf <- function(df, niter = 5, predict = TRUE) {
@@ -159,32 +171,6 @@ ensemble_psf <- function(df, niter = 5, predict = TRUE) {
     }
     return(list_model)
   }
-}
-
-
-
-ensemble_preds <- function(df, niter = 5) {
-  # Retorna uma lista com as predições do psf com difs seeds
-  list_preds <- list()
-  # list_model <- list()
-  for (i in 1:niter) {
-    set.seed(i)
-    list_preds[[i]] <- psf4ensemble(df)
-  }
-  return(list_preds)
-}
-
-
-
-ensemble_models <- function(df, niter = 5) {
-  # Retorna uma lista com os modelos do psf com difs seeds
-  list_model <- list()
-  for (i in 1:niter) {
-    set.seed(i)
-    model <- psf(df[, "qnat_obs"], cycle = 12)
-    list_model[[i]] <- model
-  }
-  return(list_model)
 }
 
 ensemble_mpar<- function(df, params, n = 24) {
