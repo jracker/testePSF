@@ -90,7 +90,7 @@ qnat_mly <- qnat_data %>%
 ```
 
 
-O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente no RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Dessa forma, iremos verificar o desempenho desta técnica para a série hidrológica dos postos da ONS. As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar seu desempenho para a série hidrológica dos postos da ONS. As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
 
 
 ```{r}
@@ -105,7 +105,7 @@ test_qmly <- qnat_mly %>%
 ```
 
 
-As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod`,que garante a reprodutibilidade dos resultados.
+As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod` para garantir a reprodutibilidade.
 
 ```{r}
 # Vazão simulada (resultados reprodutíveis)
@@ -143,7 +143,7 @@ aval_qmly <- pobs_qmly %>% #groups()
             ) %>% 
   arrange(-mKGE)
 
-aval_qmly
+(aval_qmly)
 ```
 
 Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
@@ -215,23 +215,22 @@ O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan�
 # saveRDS(esb_qmly, file = here('output', 'esb_qmly.rds'))
 # Carrega o modelo
 esb_qmly <- readRDS(here("output", "esb_qmly.rds"))
-
-
 ```
 
 
-A partir dos modelos gerados em cada iteração iremos extrair a média dos parâmetros críticos para o desempenho das previsões: `k` e `w`. Além disso, também iremos calcular a média das previsões de cada iteração. A previsão utilizando o PSF sem o ensemble também foi incluída, visto que desejamos saber se a **média das previsões** ou se previsões feitas com os **parâmetros médios** irão aumentar a acúrácia do modelo.
+A partir dos modelos gerados em cada iteração iremos extrair a média dos parâmetros críticos para o desempenho das previsões: `k` e `w`. Além disso, também calcularemos a média das previsões de cada iteração. A previsão utilizando o PSF sem o ensemble também foi incluída, visto que desejamos saber se a média das previsões ou se previsões feitas com os parâmetros médios irão aumentar a acúrácia do modelo.
 
 ```{r}
 pobqmly_esb <- esb_qmly %>%
   mutate(
-    mparam_qmly = map(models, get_mpar),
     # parâmetros k e w médios
+    mparam_qmly = map(models, get_mpar),
+    # previsões médias das iterações
     qnat_mpred = unlist(map(preds, get_mpred),
       recursive = FALSE
     ),
     qnat_pred = map(data,psf_reprod),
-    # previsões médias das iterações
+    # previsões usando k e w médios
     qnat_mpar = map(
       data, # previsões usando k e w médios
       ~ ensemble_mpar(.x, mparam_qmly)
@@ -243,7 +242,6 @@ pobqmly_esb <- esb_qmly %>%
   ) %>%
   select(qnat_obs, qnat_mpred, qnat_mpar,qnat_pred) %>%
   unnest(cols = -code_stn)
-
 ```
 
 Usaremos as seguintes métricas estatísticas para avaliar as previsões: erro médio absoluto (MAE), raiz quadrada do erro médio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
@@ -264,7 +262,7 @@ aval_esb <- pobqmly_esb %>%
 ```
 
 
-Como o KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.Verificaremos qual modelo  apresentou o KGE superior para o maior número de postos.
+Verificaremos qual modelo apresentou o KGE superior para um maior número de postos.
 
 ```{r}
 metrics_esb <- aval_esb %>%
@@ -283,10 +281,10 @@ bestKGE_esb <- metrics_esb %>%
   ungroup() %>%
   count(metric)
 
-(metrics_esb)
+(bestKGE_esb)
 ```
 
-Aparentemente a média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica analisada. No entanto, para avaliar se há vantagem em usar este modelo é importante conferir se a diferença foi significativa em relação as previsões feitas sem o ensemble.
+Aparentemente a média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo é importante conferir se a diferença foi significativa em relação as previsões feitas sem o ensemble.
 
 ```{r}
 difb_esbKGE <- metrics_esb %>%
@@ -305,6 +303,9 @@ difb_esbKGE <- metrics_esb %>%
 
 ## Validação cruzada aplicada ao posto 287
 
+
+A validação cruzada é um método bastante utilizado não só para obter uma estimativa robusta do desempenho de um modelo, mas também para selecionar os melhores hiperparâmetros, isto é, os parâmetros que são definidos antes de treinar um modelo. Iremos aplicar este método para a série hidrológica do posto que obtivemos o melhor desempenho utilizando a técnica de previsão PSF. Além de obter uma estimativa mais robusta do desempenho do algoritmo para este posto, também iremos selecionar os valores ótimos para os parâmetros `k` e `w`.
+
 ```{r}
 qnatmly_287 <- qnat_mly %>% 
   sel_station(.,287) %>% 
@@ -312,83 +313,123 @@ qnatmly_287 <- qnat_mly %>%
   ungroup() %>% 
   select(date,qnat_obs)
 summary(qnatmly_287)
+```
 
+
+Iremos separar os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez iremos realizar previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste para que após a validação cruzada possamos avaliar o desempenho das previsões utilizando os parâmetros ótimos selecionados.
+
+
+```{r}
 # Dados de treinamento sem o último ano
 train287_qmly <- get_traindt(qnatmly_287,yrs = 1)
 summary(train287_qmly)
-
 # Dados para avaliação do PSF 
 test287_qmly <- get_testdt(qnatmly_287,n = 12)
 summary(test287_qmly)
 ```
 
-Explique o que está sendo feito ... 
 
-> muito interessante o pacote ModelTime! Show este timetk, não conhecia! Vamos dar uma olhada nisso posteriormente.
+Os dados de treinamento para cada iteração serão divididos em duas partições: treinamento e validação. Nessa forma de divisão teremos a partição de validação sempre a frente da partição de treinamento. A função `time_series_cv` do pacote `timetk` nos permite criar uma plano de amostragem começando com as observações mais atuais da série. A partir do parâmetro `assess` definimos que a partição da validação deverá ser formada de  12 meses de observações e o parâmetro `skip` fornece o número de meses que serão "pulados" em cada iteração ou divisão. Além disso, definimos o número de divisões através do parâmetro `slice_limit` e um número não fixo da janela foi escolhido através do parâmetro `cumulative`. Aumentando o número de divisões teremos uma avaliação mais robusta do modelo, porém há um maior custo computacional.
 
 ```{r}
-resample_spec <- time_series_cv(data = qnatmly_287,
-                                assess      = "12 months",# df teste inicial
+resample_qmly287 <- time_series_cv(data = train287_qmly,
+                                assess      = "12 months",
                                 skip        = "12 months",
                                 cumulative  = TRUE,
-                                slice_limit = 5) 
+                                slice_limit = 15) 
 
-
-qmly287_slices <- resample_spec %>% 
-  tk_time_series_cv_plan() %>%
-  nest(date, qnat_obs) %>% 
-  pivot_wider(names_from = .key,values_from = data)
-
-# Predições usando um horizonte de 12 meses
-cv287_qmly <- qmly287_slices %>% 
-  mutate(
-    qnat_pred = map(training,
-                    ~psf_reprod(.x, n = 12)),
-    model = map(training,
-                #~psf_reprod(.x,n = 12, ret = "model")
-                ~psf_reprod(.x, n = 12, predict = FALSE)
-                ),
-    cvparams = map(model,get_cvpar)
-  )
-
-# Parâmetros k e w
-# tinha esquecido que são numeros discretos, melhor usar a moda!
-# Mas analise os resultados e veja se eles fazem sentido
-
-cvm_params <- round(Reduce("+",cv287_qmly[["cvparams"]])
-                    /length(cv287_qmly[["cvparams"]]),0)
-# cv287_qmly[["cvparams"]]
-# k  w
-# 2  4?
-
-# usar a MODA!
-moda <- function(x){
-  which.max(tabulate(x))
-}
-
-cvm_params <- cv287_qmly[["cvparams"]] %>%
-  map_dfr(~.x) %>%
-  summarise(across(c(k, w), moda))
-#cvm_params
-# 2  5
-
-# Qual o propósito disso? não teria que aplicar ao cv287_qmly[["testing"]]?
-preds287_qmly <- psf_cvparam(train287_qmly,
-                             n = 12,
-                             params = cvm_params
-                             )
-
-pobs287_qmly <- mutate(train287_qmly,
-                  qnat_pred = NA,
-                  qnat_pred = replace(qnat_pred,
-                    values = preds287_qmly
-                  )
-) 
-
-avalcv_287 <- pobs287_qmly %>% 
-  summarise(KGE = KGE(sim = qnat_pred, obs = qnat_obs)
-  ) 
-(avalcv_287)
+# Visualização do plano de amostragem
+#resample_qmly287 %>% 
+#  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
 ```
+
+
+
+Na próxima etapa aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados.
+
+```{r}
+qmly287_slices <- resample_qmly287 %>%
+  tk_time_series_cv_plan() %>%
+  nest(date, qnat_obs) %>%
+  pivot_wider(names_from = .key, values_from = data)
+
+# Previsões usando um horizonte de 12 meses
+cv287_qmly <- qmly287_slices %>%
+  mutate(
+    qnat_pred = map(
+      training,
+      ~ psf_reprod(.x, n = 12)
+    ),
+    model = map(
+      training,
+      ~ psf_reprod(.x, n = 12, predict = FALSE)
+    ),
+    cvparams = map(model, get_cvpar)
+  )
+```
+
+
+
+A avaliação do desempenho do modelo foi feita a partir da média do desempenho, nesse caso baseado na métrica KGE, do PSF aplicado a cada partição dos dados de treinamento.
+
+```{r}
+avalcv_m287 <- cv287_qmly %>%
+  select(-c("model", "training", "cvparams")) %>%
+  group_by(.id) %>%
+  unnest() %>%
+  summarise(
+    KGE = KGE(sim = qnat_pred, obs = qnat_obs)
+  ) %>%
+  ungroup() %>%
+  summarise(
+    KGE = mean(KGE)
+  )
+```
+
+
+
+Selecionaremos os valores ótimos a partir da média dos parâmetros `k` e `w`.
+
+```{r}
+# Média dos parâmetros k e w (2 e 3)
+cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
+/ length(cv287_qmly[["cvparams"]]), 0)
+
+
+# Previsões feitas com os parâmetros médios
+pcv287_mpar <- psf_cvparam(train287_qmly,
+  n = 12,
+  params = cvm_params
+)
+# Previsões sem a seleção dos parâmetros
+preds287_qmly <- psf_reprod(train287_qmly, n = 12)
+
+# Previsões e observações
+pobs287cv_qmly <- mutate(test287_qmly,
+  qnatcv_pred = NA,
+  qnat_pred = NA,
+  qnatcv_pred = replace(qnatcv_pred,
+    values = pcv287_mpar
+  ),
+  qnat_pred = replace(qnat_pred,
+    values = preds287_qmly
+  )
+)
+
+avalcvmpar_287 <- pobs287cv_qmly %>%
+  summarise(
+    KGE = KGE(sim = qnat_pred, obs = qnat_obs),
+    KGEcv = KGE(sim = qnatcv_pred, obs = qnat_obs)
+  )
+(avalcvm_287)
+```
+
+
+Utilizando 15 divisões nos dados de treinamento e a  média dos parâmetros `k` e `w` foi possível observar, baseado na métrica KGE, uma pequena melhora no modelo.
+
+
+
+
+
 
 
