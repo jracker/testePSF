@@ -200,6 +200,7 @@ O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan�
 
 
 ```{r}
+
 # Modelos e predições resultantes de 5 iterações para cada posto
 # start_time <- Sys.time()
 # esb_qmly <- train_qmly %>%
