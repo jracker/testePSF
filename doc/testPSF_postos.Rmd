@@ -334,7 +334,7 @@ Os dados de treinamento para cada iteração serão divididos em duas partiçõe
 ```{r}
 resample_qmly287 <- time_series_cv(data = train287_qmly,
                                 assess      = "12 months",
-                                skip        = "12 months",
+                                skip        = "36 months",
                                 cumulative  = TRUE,
                                 slice_limit = 15) 
 
@@ -345,7 +345,7 @@ resample_qmly287 <- time_series_cv(data = train287_qmly,
 
 
 
-Na próxima etapa aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados.
+Na próxima etapa aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados. Além disso, também iremos adicionar uma coluna com as previsões feitas a partir dos parâmetros médios.
 
 ```{r}
 qmly287_slices <- resample_qmly287 %>%
@@ -366,11 +366,23 @@ cv287_qmly <- qmly287_slices %>%
     ),
     cvparams = map(model, get_cvpar)
   )
+
+
+# Média dos parâmetros k e w (2 e 3)
+cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
+/ length(cv287_qmly[["cvparams"]]), 0)
+
+# Adicionando  coluna com as  prevs usando parâmetros médios
+cv287_qmly <- cv287_qmly %>%
+  mutate(qnatmpar_pred = map(
+    training,
+    ~ psf_cvparam(.x, n = 12, params = cvparams)
+  ))
 ```
 
 
 
-A avaliação do desempenho do modelo foi feita a partir da média do desempenho, nesse caso baseado na métrica KGE, do PSF aplicado a cada partição dos dados de treinamento.
+Iremos comparar o desempenho do modelo  com e sem a seleção dos parâmetros. 
 
 ```{r}
 avalcv_m287 <- cv287_qmly %>%
@@ -378,24 +390,28 @@ avalcv_m287 <- cv287_qmly %>%
   group_by(.id) %>%
   unnest() %>%
   summarise(
-    KGE = KGE(sim = qnat_pred, obs = qnat_obs)
+    KGEpred = KGE(sim = qnat_pred, obs = qnat_obs),
+    KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs),
+    PBIASmpar = pbias(sim = qnatmpar_pred, obs = qnat_obs),
+    NRMSEmpar = nrmse(sim = qnatmpar_pred, obs = qnat_obs),
+    NSEmpar = mNSE(sim = qnatmpar_pred, obs = qnat_obs)
   ) %>%
   ungroup() %>%
   summarise(
-    KGE = mean(KGE)
+    KGEpred = mean(KGEpred),
+    KGEmpar = mean(KGEmpar),
+    PBIASmpar = mean(PBIASmpar),
+    NRMSEmpar = mean(NRMSEmpar),
+    NSEmpar = mean(NSEmpar)
   )
 ```
 
 
 
-Selecionaremos os valores ótimos a partir da média dos parâmetros `k` e `w`.
+Enfim, iremos verificar o desempenho do modelo utilizando os parâmetros médios no conjunto de dado de testes.
+
 
 ```{r}
-# Média dos parâmetros k e w (2 e 3)
-cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
-/ length(cv287_qmly[["cvparams"]]), 0)
-
-
 # Previsões feitas com os parâmetros médios
 pcv287_mpar <- psf_cvparam(train287_qmly,
   n = 12,
@@ -421,11 +437,11 @@ avalcvmpar_287 <- pobs287cv_qmly %>%
     KGE = KGE(sim = qnat_pred, obs = qnat_obs),
     KGEcv = KGE(sim = qnatcv_pred, obs = qnat_obs)
   )
-(avalcvm_287)
+(avalcvmpar_287)
 ```
 
+Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros ótimos.
 
-Utilizando 15 divisões nos dados de treinamento e a  média dos parâmetros `k` e `w` foi possível observar, baseado na métrica KGE, uma pequena melhora no modelo.
 
 
 
