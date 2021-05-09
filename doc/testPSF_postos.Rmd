@@ -409,7 +409,7 @@ avalcv_m287 <- cv287_qmly %>%
 
 
 
-Enfim, iremos verificar o desempenho do modelo utilizando os parâmetros médios no conjunto de dado de testes.
+Iremos verificar o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de testes.
 
 
 ```{r}
@@ -441,7 +441,7 @@ avalcvmpar_287 <- pobs287cv_qmly %>%
 (avalcvmpar_287)
 ```
 
-Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros ótimos.
+Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros.
 
 
 
