@@ -130,17 +130,20 @@ pobs_qmly <- inner_join(
 A avaliação do desempenho do PSF para os últimos 24 meses considera as seguintes métricas estatísticas: erro médio absoluto (MAE), raiz quadrada do erro méio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
 
 ```{r}
-#groups(pobs_qmly)
+# groups(pobs_qmly)
 
-aval_qmly <- pobs_qmly %>% #groups()
-  #group_by(code_stn) %>%
-  summarise(mKGE = KGE(sim = qnat_pred, obs = qnat_obs),
-            mPBIAS = pbias(sim = qnat_pred, obs = qnat_obs),
-            mNSE = NSE(sim = qnat_pred, obs = qnat_obs),
-            RMSE = ModelMetrics::rmse(actual = qnat_obs,
-                                  predicted = qnat_pred),
-            mNRMSE = nrmse(sim = qnat_pred, obs = qnat_obs)
-            ) %>% 
+aval_qmly <- pobs_qmly %>% # groups()
+  # group_by(code_stn) %>%
+  summarise(
+    mKGE = KGE(sim = qnat_pred, obs = qnat_obs),
+    mPBIAS = pbias(sim = qnat_pred, obs = qnat_obs),
+    mNSE = NSE(sim = qnat_pred, obs = qnat_obs),
+    RMSE = ModelMetrics::rmse(
+      actual = qnat_obs,
+      predicted = qnat_pred
+    ),
+    mNRMSE = nrmse(sim = qnat_pred, obs = qnat_obs)
+  ) %>%
   arrange(-mKGE)
 
 (aval_qmly)
@@ -333,14 +336,16 @@ summary(test287_qmly)
 Os dados de treinamento para cada iteração serão divididos em duas partições: treinamento e validação. Nessa forma de divisão teremos a partição de validação sempre a frente da partição de treinamento. A função `time_series_cv` do pacote `timetk` nos permite criar uma plano de amostragem começando com as observações mais atuais da série. A partir do parâmetro `assess` definimos que a partição da validação deverá ser formada de  12 meses de observações e o parâmetro `skip` fornece o número de meses que serão "pulados" em cada iteração ou divisão. Além disso, definimos o número de divisões através do parâmetro `slice_limit` e um número não fixo da janela foi escolhido através do parâmetro `cumulative`. Aumentando o número de divisões teremos uma avaliação mais robusta do modelo, porém há um maior custo computacional.
 
 ```{r}
-resample_qmly287 <- time_series_cv(data = train287_qmly,
-                                assess      = "12 months",
-                                skip        = "36 months",
-                                cumulative  = TRUE,
-                                slice_limit = 15) 
+resample_qmly287 <- time_series_cv(
+  data = train287_qmly,
+  assess = "12 months",
+  skip = "36 months",
+  cumulative = TRUE,
+  slice_limit = 15
+)
 
 # Visualização do plano de amostragem
-#resample_qmly287 %>% 
+# resample_qmly287 %>%
 #  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
 ```
 
@@ -405,6 +410,7 @@ avalcv_m287 <- cv287_qmly %>%
     NRMSEmpar = mean(NRMSEmpar),
     NSEmpar = mean(NSEmpar)
   )
+(avalcv_m287)
 ```
 
 

@@ -129,7 +129,7 @@ stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
 
 ### Aplicação do algoritmo PSF
 
-O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente no RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Nesse sentido, iremos verificar o desempenho desta técnica para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho. 
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar o desempenho desta técnica para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
 
 ```{r}
 #PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
@@ -215,8 +215,8 @@ A avaliação do desempenho do PSF para os últimos 24 meses considera as seguin
 pos_stat_inds <- c(2, 4:6, 9, 17, 19:20) 
 
 stat_eval <- hydroGOF::gof(
-  sim = df_ts$qnat_pred, 
-  obs = df_ts$qnat_obs)[pos_stat_inds,]
+  sim = df_xts$qnat_pred, 
+  obs = df_xts$qnat_obs)[pos_stat_inds,]
 stat_eval
 #names(stat_eval)
 ```
