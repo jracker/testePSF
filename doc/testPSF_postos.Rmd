@@ -73,9 +73,6 @@ glimpse(qnat_data)
 ```
 
 
-
-## Aplicação do PSF para os principais postos da ONS
-
 Observam-se dados faltantes na série, então selecionaremos através da função `apply_cmonth` somente os meses com pelo menos 28 observações válidas. Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF através da função `apply_cyears`.
 
 ```{r}
@@ -90,7 +87,7 @@ qnat_mly <- qnat_data %>%
 ```
 
 
-O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar seu desempenho para a série hidrológica dos postos da ONS. As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado somente na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar seu desempenho para as séries hidrológicas dos postos da ONS. As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
 
 
 ```{r}
@@ -105,19 +102,20 @@ test_qmly <- qnat_mly %>%
 ```
 
 
-As previsões de vazão para os dois últimos anos de todos os postos da ONS foram feitas através da função `psf_reprod` para garantir a reprodutibilidade.
+
+A função `psf_reprod` garante a reprodutibilidade dos resultados.
 
 ```{r}
-# Vazão simulada (resultados reprodutíveis)
-preds_qmly <- train_qmly %>% 
+# Vazão prevista 
+prevs_qmly <- train_qmly %>% 
   mutate(qnat_pred = map(data,
                          ~psf_reprod(.x, n = 24, predict = TRUE)
                          )
          )
 
-# Unindo predições e observações de cada posto
+# Unindo previsões e observações de cada posto
 pobs_qmly <- inner_join(
-  select(preds_qmly, -data),
+  select(prevs_qmly, -data),
   test_qmly,
   by = "code_stn"
 ) %>% 
@@ -175,11 +173,9 @@ ggplot(aes(x = code_stn, y = valor)) +
   theme(axis.text.x = )
 ```
 
-
-
+Visualização da melhor previsão baseado no KGE.
 
 ```{r}
-# Visualização das previsões do posto com melhor KGE
 qnat_posto287 <- pobs_qmly %>% 
   sel_station(.,station = 287) %>% 
   select(date,qnat_obs,qnat_pred)
@@ -199,8 +195,10 @@ forecast::autoplot(posto287_xts, facets = FALSE)+
 ## Aplicação do ensemble PSF
 
 
-O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, iremos fazer o  ensemble do PSF rodando cinco iterações e verificaremos se as previsões médias ou as previsões feitas com os parâmetros médios `k` e `w` são capazes de gerar melhores previsões. Inicialmente vamos armazenar as previsões e os parâmetros do modelo gerados em cada iteração utilizando a função `ensemble_psf`.
+O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Iremos fazer o ensemble do PSF rodando cinco iterações e verificaremos se as previsões médias dos modelos ou se as previsões feitas com os parâmetros `k` e `w` que mais se repetiram são capazes de gerar melhores resultados.
 
+
+A função `ensemble_psf` é usada para gerar os modelos e suas previsões.
 
 ```{r}
 
@@ -222,12 +220,12 @@ esb_qmly <- readRDS(here("output", "esb_qmly.rds"))
 ```
 
 
-A partir dos modelos gerados em cada iteração iremos extrair a média dos parâmetros críticos para o desempenho das previsões: `k` e `w`. Além disso, também calcularemos a média das previsões de cada iteração. A previsão utilizando o PSF sem o ensemble também foi incluída, visto que desejamos saber se a média das previsões ou se previsões feitas com os parâmetros médios irão aumentar a acúrácia do modelo.
+A partir dos modelos gerados em cada iteração iremos extrair a moda dos parâmetros críticos para o desempenho das previsões: `k` e `w`. Além disso, calcularemos a média das previsões de cada modelo. A previsão utilizando o PSF sem o ensemble foi incluída para comparação.
 
 ```{r}
 pobqmly_esb <- esb_qmly %>%
   mutate(
-    # parâmetros k e w médios
+    # moda dos parâmetros k e w 
     mparam_qmly = map(models, get_mpar),
     # previsões médias das iterações
     qnat_mpred = unlist(map(preds, get_mpred),
@@ -288,7 +286,7 @@ bestKGE_esb <- metrics_esb %>%
 (bestKGE_esb)
 ```
 
-Aparentemente a média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo é importante conferir se a diferença foi significativa em relação as previsões feitas sem o ensemble.
+A média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo vamos verificar se a diferença foi significativa em relação as previsões feitas sem o ensemble.
 
 ```{r}
 difb_esbKGE <- metrics_esb %>%
@@ -351,7 +349,7 @@ resample_qmly287 <- time_series_cv(
 
 
 
-Na próxima etapa aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados. Além disso, também iremos adicionar uma coluna com as previsões feitas a partir dos parâmetros médios.
+ Aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados. Além disso, iremos adicionar uma coluna com as previsões feitas a partir dos parâmetros médios.
 
 ```{r}
 qmly287_slices <- resample_qmly287 %>%
@@ -415,7 +413,7 @@ avalcv_m287 <- cv287_qmly %>%
 
 
 
-Iremos verificar o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de testes.
+Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de testes.
 
 
 ```{r}
@@ -447,7 +445,7 @@ avalcvmpar_287 <- pobs287cv_qmly %>%
 (avalcvmpar_287)
 ```
 
-Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros.
+Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros pela média.
 
 
 
