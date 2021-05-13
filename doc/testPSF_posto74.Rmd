@@ -129,7 +129,7 @@ stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
 
 ### Aplicação do algoritmo PSF
 
-O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar o desempenho desta técnica para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
+O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar o seu desempenho para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
 
 ```{r}
 #PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
@@ -148,7 +148,7 @@ O treinamento do modelo no pacote `PSF` é feito através da função `psf` que 
 ```
 
 
-A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros `k` e `w`  correspondem respectivamente ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência. Ambos parâmetros são bastante importantes no desempenho das previsões e podem ser especificados por uma sequência de valores. Nesse caso, a função `psf` irá automaticamente selecionar o valor ótimo da sequência.
+A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros `k` e `w`  correspondem respectivamente ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência. Ambos parâmetros são bastante importantes no desempenho das previsões e podem ser especificados por uma sequência de números inteiros. A função `psf` irá automaticamente selecionar o valor ótimo para a  sequência.
 
 ```{r}
 # Treinamento do modelo
