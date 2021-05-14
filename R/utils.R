@@ -1,5 +1,4 @@
 
-
 #' Contabiliza observações válidas
 #'
 #' @param x vetor numérico
@@ -90,14 +89,13 @@ get_cyears <- function(df) {
 
 #' Filtragem dos dados com anos completos
 #'  
+#' Usar depois de agrupar os dados caso selecionado mais de um posto
+#'  
 #'  @param df um tibble ou data frame
-#'  
 #'  @param ndays_thresh  um inteiro
-#'  
 #'  @return df um tibble ou data frame com os meses completos
 #'  
 apply_cyears <- function(df) {
-  # Usar depois de agrupar os dados caso selecionado mais de um posto
   cyrs <- get_cyears(df)
   df_cyrs <- df %>%
     filter(lubridate::year(date) %in% cyrs)
@@ -107,11 +105,9 @@ apply_cyears <- function(df) {
 #' Seleciona dados de treinamento para aplicação do PSF
 #'
 #' @param df data frame com série mensal dos dados de vazão
-#' 
 #' @param yrs número de anos que serão removidos das observações para teste do 
 #' PSF.
 #' Valor pré-definido como 2 anos.
-#' 
 get_traindt <- function(df, yrs = 2) {
   cyrs <- get_cyears(df)
   leave_out <- tail(cyrs, n = yrs)
@@ -138,13 +134,13 @@ get_testdt <- function(df, n = 24) {
 }
 
 
-#' Aplica PSF e retorna o modelo ou suas previsões
+#' Aplica PSF e retorna o modelo ou as previsões feitas com o modelo
 #'
-#' @param df um tibble ou data frame
+#' @param df um tibble ou data frame com dados de vazão mensal
 #' @param n número de meses à frente. Pré-definido como 24.
 #' @param predict valor lógico pré-definido para retornar as previsões
 #'
-#' @return vetor numérico com as previsões ou objeto da classe psf com 
+#' @return vetor numérico com as previsões ou objeto de classe psf com 
 #' informações do modelo
 #' @export
 #'
@@ -164,13 +160,14 @@ psf_reprod <- function(df, n = 24, predict = TRUE) {
 
 
 #' Aplica o PSF e retorna o modelo ou as previsões
+#' 
 #' Adaptado para uso no ensemble
 #'
-#' @param df um tibble ou data frame
+#' @param df um tibble ou data frame com dados de vazão mensal
 #' @param n número de meses à frente. Pré-definido como 24.
 #' @param predict valor lógico pré-definido para retornar as previsões
 #'
-#' @return vetor numérico com as previsões ou objeto da classe psf com 
+#' @return vetor numérico com as previsões ou objeto de classe psf com 
 #' informações do modelo 
 #' @export
 #'
@@ -189,17 +186,15 @@ psf4ensemble <- function(df, n = 24, predict = TRUE) {
 
 #' Aplica o PSF um número de vezes e retorna os modelos ou as 
 #' previsões
-#' @param df um tibble ou data frame
 #' 
+#' @param df um tibble ou data frame com dados de vazão mensal
 #' @param niter iterações que definem número de modelos ou de previsões
-#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
-#'
+#' 
 #' @return lista das previsões ou objetos de classe psf com 
 #' informações do modelos 
-#' 
 #' @export
-#'
+#' 
 #' @examples
 #' 
 ensemble_psf <- function(df, niter = 5, predict = TRUE) {
@@ -222,10 +217,8 @@ ensemble_psf <- function(df, niter = 5, predict = TRUE) {
 
 #' Aplica o PSF utilizando os parâmetros k e w selecionados
 #' 
-#' @param df um tibble ou data frame
-#' 
+#' @param df um tibble ou data frame com dados de vazão mensal
 #' @param params lista de tibbles contendo os valores k e w
-#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
 #'
 #' @return lista das previsões ou objetos de classe psf com 
@@ -245,20 +238,16 @@ ensemble_mpar<- function(df, params, n = 24) {
   return(pred)
 }
 
-#' Seleciona os parâmetros k e w com base na moda
+#' Calcula a moda dos parâmetros k e w 
 #' 
-#' @param modelo uma lista de objetos da classe psf
-#' 
-#' @param niter número de modelos ou de previsões
-#' 
+#' @param modelo listas aninhadas que contém o objeto de classe psf com 
+#' informações do modelo
 #'
-#' @return lista de tibbles com os valores k e w selecionados
-#' 
+#' @return tibble com a moda dos parâmetros k e w
 #' @export
 #'
 #' @examples
 #' 
-
 get_modpar <- function(modelo) {
   tibble(
     k = map_dbl(modelo, "k"),
@@ -268,6 +257,16 @@ get_modpar <- function(modelo) {
   summarise(across(c(k, w), moda))
 }
 
+#' Calcula a média os parâmetros k e w 
+#' 
+#' @param modelo listas aninhadas com objetos de classe psf com informações do 
+#' modelo
+#' 
+#' @return tibble com a média dos parâmetros k e w
+#' @export
+#'
+#' @examples
+#' 
 get_meanpar <- function(modelo){
   tibble(
     k = map_dbl(modelo,"k"),
@@ -281,22 +280,51 @@ get_meanpar <- function(modelo){
 
 
 
+#' Calcula a média das previsões do ensemble
+#' 
+#' @param lista com as previsões gerados por cada modelo do ensemble
+#' 
+#'
+#' @return lista com a previsão média dos modelos do ensemble
+#' @export
+#'
+#' @examples
+#' 
 get_mpred <- function(lista) {
-  # Faz a média das predições dos modelos retornados pelo ensemble
   pred_mean <- list(
     rowMeans(as.data.frame(lista))
   )
 }
 
-
-# For time series cross validation -----------------------------
-
+#' Seleciona os parâmetros k e w dos objetos de classe psf gerados na validação
+#' cruzada 
+#' 
+#' @param model objeto de classe psf com informações do modelo
+#' 
+#' @return vetor de inteiros com os parâmetros k e w
+#' @export
+#'
+#' @examples
+#' 
 get_cvpar <- function(model) {
   # Parâmetros após validação cruzada
   unl_model <- unlist(model, recursive = FALSE)
   params_psf <- c(k = unl_model$k, w = unl_model$w)
 }
 
+
+
+
+#' Aplica o PSF utilizando os parâmetros selecionados na validação cruzada
+#' 
+#' @param df um tibble ou data frame com dados de vazão mensal
+#' @param params 
+#' 
+#' @return vetor de inteiros com os parâmetros k e w
+#' @export
+#
+#' @examples
+#' 
 psf_cvparam <- function(df, n = 12, params = NULL) {
   # df = train287_qmly; n = 12; params = cvm_params
   set.seed(1)
