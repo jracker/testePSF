@@ -226,23 +226,23 @@ A partir dos modelos gerados em cada iteração iremos extrair a moda dos parâm
 pobqmly_esb <- esb_qmly %>%
   mutate(
     # moda dos parâmetros k e w 
-    mparam_qmly = map(models, get_modpar),
+    modparam_qmly = map(models, get_modpar),
     # previsões médias das iterações
     qnat_mpred = unlist(map(preds, get_mpred),
       recursive = FALSE
     ),
     qnat_pred = map(data,psf_reprod),
     # previsões usando k e w médios
-    qnat_mpar = map(
+    qnat_modpar = map(
       data, # previsões usando k e w médios
-      ~ ensemble_mpar(.x, mparam_qmly)
+      ~ ensemble_mpar(.x, modparam_qmly)
     )
   ) %>%
   inner_join(.,
     test_qmly,
     by = "code_stn"
   ) %>%
-  select(qnat_obs, qnat_mpred, qnat_mpar,qnat_pred) %>%
+  select(qnat_obs, qnat_mpred, qnat_modpar,qnat_pred) %>%
   unnest(cols = -code_stn)
 ```
 
@@ -253,7 +253,7 @@ Usaremos as seguintes métricas estatísticas para avaliar as previsões: erro m
 aval_esb <- pobqmly_esb %>%
   summarise(
     KGE_mpred = KGE(sim = qnat_mpred, obs = qnat_obs),
-    KGE_mpar = KGE(sim = qnat_mpar, obs = qnat_obs),
+    KGE_modpar = KGE(sim = qnat_modpar, obs = qnat_obs),
     KGE_pred = KGE(sim = qnat_pred, obs = qnat_obs),
     mPBIAS = pbias(sim = qnat_mpred, obs = qnat_obs),
     mNRMSE = nrmse(sim = qnat_mpred, obs = qnat_obs),
@@ -269,7 +269,8 @@ Verificaremos qual modelo apresentou o KGE superior para um maior número de pos
 
 ```{r}
 metrics_esb <- aval_esb %>%
-  select(code_stn, KGE_mpred, KGE_mpar, KGE_pred) %>%
+  select(code_stn, KGE_mpred, KGE_modpar, KGE_pred) %>%
+  mutate(code_stn = factor(code_stn, levels = code_stn[order(KGE_mpred)])) %>% 
   # filter(mKGE >= 0.3 | mNSE >= 0.5) %>%
   pivot_longer(
     cols = -c(code_stn),
@@ -277,6 +278,15 @@ metrics_esb <- aval_esb %>%
     values_to = "valor"
   )
 
+metrics_esb %>%
+ggplot(aes(x = code_stn, y = valor)) +
+  geom_col() + 
+  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(metrics_esb$metric)) + 
+  theme(axis.text.x = )
+```
+
+
+```{r}
 bestKGE_esb <- metrics_esb %>%
   group_by(code_stn) %>%
   filter(valor >= 0.3) %>%
@@ -286,6 +296,7 @@ bestKGE_esb <- metrics_esb %>%
 
 (bestKGE_esb)
 ```
+
 
 A média das previsões das cinco iterações forneceram o melhor resultado de acordo com métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo vamos verificar se a diferença foi significativa em relação as previsões feitas sem o ensemble.
 
@@ -300,6 +311,7 @@ difb_esbKGE <- metrics_esb %>%
   arrange(-valor)
 
 (difb_esbKGE)
+(summary(difb_esbKGE$difb_KGE))
 ```
 
 
@@ -319,7 +331,7 @@ summary(qnatmly_287)
 ```
 
 
-Iremos separar os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez realizaremos previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste após a validação cruzada para avaliar o desempenho das previsões utilizando os parâmetros ótimos.
+Iremos separar os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez realizaremos previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste após a validação cruzada para avaliar o desempenho das previsões utilizando os parâmetros selecionados.
 
 
 ```{r}
@@ -386,6 +398,7 @@ cv287_qmly <- cv287_qmly %>%
 
 Iremos comparar o desempenho do modelo com e sem a seleção dos parâmetros pela média.
 
+
 ```{r}
 avalcv_m287 <- cv287_qmly %>%
   select(-c("model", "training", "cvparams")) %>%
@@ -394,19 +407,28 @@ avalcv_m287 <- cv287_qmly %>%
   summarise(
     KGEpred = KGE(sim = qnat_pred, obs = qnat_obs),
     KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs)
-    #PBIASmpar = pbias(sim = qnatmpar_pred, obs = qnat_obs),
-    #NRMSEmpar = nrmse(sim = qnatmpar_pred, obs = qnat_obs),
-    #NSEmpar = mNSE(sim = qnatmpar_pred, obs = qnat_obs)
-  ) %>%
-  ungroup() %>%
-  summarise(
-    KGEpred = mean(KGEpred),
-    KGEmpar = mean(KGEmpar)
-    #PBIASmpar = mean(PBIASmpar),
-    #NRMSEmpar = mean(NRMSEmpar),
-    #NSEmpar = mean(NSEmpar)
+  )  %>% 
+  mutate(.id = factor(.id, levels = .id[order(KGEmpar)])) %>% 
+  pivot_longer(
+    cols = -c(.id),
+    names_to = "metric",
+    values_to = "valor"
   )
-(avalcv_m287)
+
+avalcv_m287 %>%
+ggplot(aes(x = .id, y = valor)) +
+  geom_col() + 
+  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(avalcv_m287$metric)) + 
+  theme(axis.text.x = )
+```
+
+
+```{r}
+avalcv_m287 %>%
+  group_by(metric) %>%
+  summarise(
+    valor = mean(valor)
+  )
 ```
 
 
@@ -443,6 +465,20 @@ avalcvmpar_287 <- pobs287cv_qmly %>%
 ```
 
 Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros pela média.
+
+
+```{r}
+posto287cv_xts <- xts(pobs287cv_qmly[,c("qnat_obs","qnatcv_pred","qnat_pred")], 
+                   order.by = as.Date(pobs287cv_qmly[["date"]]))
+forecast::autoplot(posto287cv_xts, facets = FALSE)+ 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
+```
+
 
 
 
