@@ -92,7 +92,9 @@ get_cyears <- function(df) {
 #' Usar depois de agrupar os dados caso selecionado mais de um posto
 #'  
 #'  @param df um tibble ou data frame
+#'  
 #'  @param ndays_thresh  um inteiro
+#'  
 #'  @return df um tibble ou data frame com os meses completos
 #'  
 apply_cyears <- function(df) {
@@ -105,9 +107,11 @@ apply_cyears <- function(df) {
 #' Seleciona dados de treinamento para aplicação do PSF
 #'
 #' @param df data frame com série mensal dos dados de vazão
+#' 
 #' @param yrs número de anos que serão removidos das observações para teste do 
 #' PSF.
 #' Valor pré-definido como 2 anos.
+#' 
 get_traindt <- function(df, yrs = 2) {
   cyrs <- get_cyears(df)
   leave_out <- tail(cyrs, n = yrs)
@@ -120,9 +124,11 @@ get_traindt <- function(df, yrs = 2) {
 #' Selecionar dados de teste para avaliação do PSF
 #'
 #' @param df data frame com dados de vazão mensal
+#' 
 #' @param n número de meses à frente. Pré-definido como 24.
 #'
 #' @return data frame com dados do período de teste
+#' 
 #' @export
 #'
 #' @examples
@@ -137,11 +143,15 @@ get_testdt <- function(df, n = 24) {
 #' Aplica PSF e retorna o modelo ou as previsões feitas com o modelo
 #'
 #' @param df um tibble ou data frame com dados de vazão mensal
+#' 
 #' @param n número de meses à frente. Pré-definido como 24.
+#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
+#' 
 #'
 #' @return vetor numérico com as previsões ou objeto de classe psf com 
 #' informações do modelo
+#' 
 #' @export
 #'
 #' @examples
@@ -164,11 +174,14 @@ psf_reprod <- function(df, n = 24, predict = TRUE) {
 #' Adaptado para uso no ensemble
 #'
 #' @param df um tibble ou data frame com dados de vazão mensal
+#' 
 #' @param n número de meses à frente. Pré-definido como 24.
+#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
 #'
 #' @return vetor numérico com as previsões ou objeto de classe psf com 
 #' informações do modelo 
+#' 
 #' @export
 #'
 #' @examples
@@ -188,11 +201,14 @@ psf4ensemble <- function(df, n = 24, predict = TRUE) {
 #' previsões
 #' 
 #' @param df um tibble ou data frame com dados de vazão mensal
+#' 
 #' @param niter iterações que definem número de modelos ou de previsões
+#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
 #' 
 #' @return lista das previsões ou objetos de classe psf com 
 #' informações do modelos 
+#' 
 #' @export
 #' 
 #' @examples
@@ -218,11 +234,14 @@ ensemble_psf <- function(df, niter = 5, predict = TRUE) {
 #' Aplica o PSF utilizando os parâmetros k e w selecionados
 #' 
 #' @param df um tibble ou data frame com dados de vazão mensal
+#' 
 #' @param params lista de tibbles contendo os valores k e w
+#' 
 #' @param predict valor lógico pré-definido para retornar as previsões
 #'
 #' @return lista das previsões ou objetos de classe psf com 
 #' informações do modelos 
+#' 
 #' @export
 #'
 #' @examples
@@ -244,6 +263,7 @@ ensemble_mpar<- function(df, params, n = 24) {
 #' informações do modelo
 #'
 #' @return tibble com a moda dos parâmetros k e w
+#' 
 #' @export
 #'
 #' @examples
@@ -278,14 +298,12 @@ get_meanpar <- function(modelo){
     )
 }
 
-
-
 #' Calcula a média das previsões do ensemble
 #' 
 #' @param lista com as previsões gerados por cada modelo do ensemble
 #' 
-#'
 #' @return lista com a previsão média dos modelos do ensemble
+#' 
 #' @export
 #'
 #' @examples
@@ -302,12 +320,12 @@ get_mpred <- function(lista) {
 #' @param model objeto de classe psf com informações do modelo
 #' 
 #' @return vetor de inteiros com os parâmetros k e w
+#' 
 #' @export
 #'
 #' @examples
 #' 
 get_cvpar <- function(model) {
-  # Parâmetros após validação cruzada
   unl_model <- unlist(model, recursive = FALSE)
   params_psf <- c(k = unl_model$k, w = unl_model$w)
 }
@@ -318,9 +336,12 @@ get_cvpar <- function(model) {
 #' Aplica o PSF utilizando os parâmetros selecionados na validação cruzada
 #' 
 #' @param df um tibble ou data frame com dados de vazão mensal
-#' @param params 
 #' 
-#' @return vetor de inteiros com os parâmetros k e w
+#' @param params vetor de inteiros com os parâmetros selecionados na validação 
+#' cruzada
+#' 
+#' @return vetor numérico com as previsões 
+#' 
 #' @export
 #
 #' @examples
