@@ -319,7 +319,7 @@ summary(qnatmly_287)
 ```
 
 
-Iremos separar os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez iremos realizar previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste para que após a validação cruzada possamos avaliar o desempenho das previsões utilizando os parâmetros ótimos selecionados.
+Iremos separar os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez realizaremos previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste após a validação cruzada para avaliar o desempenho das previsões utilizando os parâmetros ótimos.
 
 
 ```{r}
@@ -332,7 +332,7 @@ summary(test287_qmly)
 ```
 
 
-Os dados de treinamento para cada iteração serão divididos em duas partições: treinamento e validação. Nessa forma de divisão teremos a partição de validação sempre a frente da partição de treinamento. A função `time_series_cv` do pacote `timetk` nos permite criar uma plano de amostragem começando com as observações mais atuais da série. A partir do parâmetro `assess` definimos que a partição da validação deverá ser formada de  12 meses de observações e o parâmetro `skip` fornece o número de meses que serão "pulados" em cada iteração ou divisão. Além disso, definimos o número de divisões através do parâmetro `slice_limit` e um número não fixo da janela foi escolhido através do parâmetro `cumulative`. Aumentando o número de divisões teremos uma avaliação mais robusta do modelo, porém há um maior custo computacional.
+Os dados de treinamento serão divididos em duas partições: treinamento e validação. Nessa forma de divisão teremos a partição de validação sempre a frente da partição de treinamento. A função `time_series_cv` do pacote `timetk` nos permite criar uma plano de amostragem começando com as observações mais atuais da série. A partir do parâmetro `assess` definimos que a partição da validação deverá ser formada de  12 meses de observações e o parâmetro `skip` fornece o número de meses que serão pulados em cada divisão. O número de divisões é selecionado pelo parâmetro `slice_limit` e um número não fixo da janela foi definido através do parâmetro `cumulative`. Aumentando o número de divisões teremos uma avaliação mais robusta do modelo, porém há um maior custo computacional.
 
 ```{r}
 resample_qmly287 <- time_series_cv(
@@ -348,9 +348,8 @@ resample_qmly287 <- time_series_cv(
 #  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
 ```
 
+ Aplicaremos o PSF a todas as divisões do conjunto de  treinamento para obter uma avaliação robusta do desempenho do modelo. Além disso disso, adicionaremos uma coluna com as previsões usando a média dos parâmetros `k` e `w`.
 
-
- Aplicaremos o PSF a todas as partições do conjunto de  treinamento e armazenaremos quais valores dos parâmetros `k` e `w` foram utilizados. Além disso, iremos adicionar uma coluna com as previsões feitas a partir dos parâmetros médios.
 
 ```{r}
 qmly287_slices <- resample_qmly287 %>%
@@ -385,9 +384,7 @@ cv287_qmly <- cv287_qmly %>%
   ))
 ```
 
-
-
-Iremos comparar o desempenho do modelo  com e sem a seleção dos parâmetros. 
+Iremos comparar o desempenho do modelo com e sem a seleção dos parâmetros pela média.
 
 ```{r}
 avalcv_m287 <- cv287_qmly %>%
@@ -396,25 +393,24 @@ avalcv_m287 <- cv287_qmly %>%
   unnest() %>%
   summarise(
     KGEpred = KGE(sim = qnat_pred, obs = qnat_obs),
-    KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs),
-    PBIASmpar = pbias(sim = qnatmpar_pred, obs = qnat_obs),
-    NRMSEmpar = nrmse(sim = qnatmpar_pred, obs = qnat_obs),
-    NSEmpar = mNSE(sim = qnatmpar_pred, obs = qnat_obs)
+    KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs)
+    #PBIASmpar = pbias(sim = qnatmpar_pred, obs = qnat_obs),
+    #NRMSEmpar = nrmse(sim = qnatmpar_pred, obs = qnat_obs),
+    #NSEmpar = mNSE(sim = qnatmpar_pred, obs = qnat_obs)
   ) %>%
   ungroup() %>%
   summarise(
     KGEpred = mean(KGEpred),
-    KGEmpar = mean(KGEmpar),
-    PBIASmpar = mean(PBIASmpar),
-    NRMSEmpar = mean(NRMSEmpar),
-    NSEmpar = mean(NSEmpar)
+    KGEmpar = mean(KGEmpar)
+    #PBIASmpar = mean(PBIASmpar),
+    #NRMSEmpar = mean(NRMSEmpar),
+    #NSEmpar = mean(NSEmpar)
   )
 (avalcv_m287)
 ```
 
 
-
-Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de testes.
+Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de teste.
 
 
 ```{r}
