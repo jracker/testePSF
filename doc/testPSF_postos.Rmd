@@ -173,7 +173,7 @@ ggplot(aes(x = code_stn, y = valor)) +
   theme(axis.text.x = )
 ```
 
-Visualização da melhor previsão baseado no KGE.
+Visualização da melhor previsão baseado na métrica KGE.
 
 ```{r}
 qnat_posto287 <- pobs_qmly %>% 
@@ -195,7 +195,7 @@ forecast::autoplot(posto287_xts, facets = FALSE)+
 ## Aplicação do ensemble PSF
 
 
-O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Iremos fazer o ensemble do PSF rodando cinco iterações e verificaremos se as previsões médias dos modelos ou se as previsões feitas com os parâmetros `k` e `w` que mais se repetiram são capazes de gerar melhores resultados.
+O pacote PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Iremos fazer o ensemble do PSF rodando cinco iterações e verificaremos se as previsões médias e as previsões feitas com as modas dos parâmetros `k` e `w` dos modelos são capazes de gerar melhores resultados.
 
 
 A função `ensemble_psf` é usada para gerar os modelos e suas previsões.
@@ -226,7 +226,7 @@ A partir dos modelos gerados em cada iteração iremos extrair a moda dos parâm
 pobqmly_esb <- esb_qmly %>%
   mutate(
     # moda dos parâmetros k e w 
-    mparam_qmly = map(models, get_mpar),
+    mparam_qmly = map(models, get_modpar),
     # previsões médias das iterações
     qnat_mpred = unlist(map(preds, get_mpred),
       recursive = FALSE
@@ -247,6 +247,7 @@ pobqmly_esb <- esb_qmly %>%
 ```
 
 Usaremos as seguintes métricas estatísticas para avaliar as previsões: erro médio absoluto (MAE), raiz quadrada do erro médio (RMSE), o RMSE normalizado pelo desvio padrão da observação (NRMSE %), O viés relativo (PBIAS %), o coeficiente de Nash-Sutcliffe, coeficiente de determinação (R^2^), o coeficiente de Kling-Gupta Efficiency (KGE) e VE.
+
 
 ```{r}
 aval_esb <- pobqmly_esb %>%
@@ -286,7 +287,7 @@ bestKGE_esb <- metrics_esb %>%
 (bestKGE_esb)
 ```
 
-A média das previsões das cinco iterações forneceram o melhor resultado de acordo com a métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo vamos verificar se a diferença foi significativa em relação as previsões feitas sem o ensemble.
+A média das previsões das cinco iterações forneceram o melhor resultado de acordo com métrica KGE. No entanto, para avaliar se há vantagem em usar este modelo vamos verificar se a diferença foi significativa em relação as previsões feitas sem o ensemble.
 
 ```{r}
 difb_esbKGE <- metrics_esb %>%
