@@ -72,9 +72,8 @@ glimpse(qnat_data)
 Os dados importados precisam filtrados para o posto de interesse: posto 74 da ONS (G. B. Munhoz).
 
 ```{r}
-posto <- 74
 qnat_posto <- qnat_data %>% 
-  dplyr::filter(code_stn == posto)
+  sel_station(.,station = 74) %>% 
 glimpse(qnat_posto)
 ```
 
@@ -82,16 +81,8 @@ glimpse(qnat_posto)
 Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com pelo menos 28 observações válidas e anos completos.
 
 ```{r}
-# Seleciona observações com pelo menos 28 observações válidas no mês
 qnat_posto_mly <- qnat_posto %>% 
-  dplyr::group_by(date = floor_date(date, "month"), code_stn) %>% 
-  dplyr::summarise(
-    qnat_obs = mean_wise(qnat), 
-    valid = nvalid(qnat), 
-    N = n(),
-    .groups = "drop"
-  ) %>%
-  dplyr::filter(valid >= 28) 
+  apply_cmonth(.,ndays_thresh = 28)
 
 # check
 #str(qnat_posto_mly)
@@ -103,21 +94,13 @@ qnat_posto_mly <- qnat_posto %>%
 Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF.
 
 ```{r}
-# Anos completos
-anos_comp <- qnat_posto_mly %>%
-  group_by(ano = lubridate::year(date)) %>%
-  tally() %>%
-  filter(n == 12) %>%
-  pull(ano) 
-# Usa apenas as observações dos anos completos
-qnat_posto_mly <- qnat_posto_mly %>%
-  filter(lubridate::year(date) %in% anos_comp)
-# check
-#qnat_posto_mly %>%
-#  filter(valid != N)
-# Seleciona apenas a data e as observações de vazão 
-qnat_posto_mly <- qnat_posto_mly %>%
-  select(date, qnat_obs)
+# anos completos
+anos_comp <- get_cyears(qnat_posto_mly)
+
+# filtra observações com os anos completos
+qnat_posto_mly <- qnat_posto_mly %>% 
+  apply_cyears() %>% 
+  select(date,qnat_obs)
 
 # check
 head(qnat_posto_mly)
@@ -126,25 +109,24 @@ stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
 #nrow(qnat_posto_mly) %/% 12
 ```
 
-
 ### Aplicação do algoritmo PSF
 
 O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo [apresentou](https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf) um desempenho superior, baseado na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar o seu desempenho para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.
 
-```{r}
-#PSF:::convert_datatype(data = qnat_posto_mly["qnat_obs"])
-# dados de : 2017 e 2018
-(leave_out <- tail(anos_comp, n = 2))
-data_train <- qnat_posto_mly %>%
-  filter(!lubridate::year(date) %in% leave_out)
-```
 
+```{r}
+# dados de treinamento (sem últimos dois anos)
+train_posto_qmly <- qnat_posto_mly  %>% 
+  get_traindt()
+# dados de teste: 2017 e 2018
+(leave_out <- tail(anos_comp, n = 2))
+```
 
 O treinamento do modelo no pacote `PSF` é feito através da função `psf` que requer como entrada uma série temporal univariada em um formato numérico. Além disso, é possível especificar os parâmetros: `k`,`w` e `cycle`. O parâmetro `cycle` corresponde ao número de valores de um ciclo na série temporal e deve ser adicionado caso os dados não estejam no formato `ts` (série temporal). 
 
 ```{r}
 # Os dados não estão no formato ts (série temporal)
-(is.ts(data_train))
+(is.ts(train_posto_qmly))
 ```
 
 
@@ -154,7 +136,7 @@ A técnica `PSF` pode ser descrita em duas etapas: agrupamento e previsão. Na p
 # Treinamento do modelo
 set.seed(123)
 modelo_munhoz <- psf(
-  data_train[["qnat_obs"]],
+  train_posto_qmly[["qnat_obs"]],
   k = 3:20,
   w = 1:10,
   cycle = 12
@@ -176,7 +158,8 @@ plot(modelo_munhoz, pred_munhoz)
 As previsões do PSF podem ser adicionadas aos dados originais.
 
 ```{r}
-inds <- (nrow(data_train) + 1):(nrow(data_train) + (12 * length(leave_out)))
+inds <- (nrow(train_posto_qmly) + 1):(nrow(train_posto_qmly) + (12 * length(leave_out)))
+
 nrow(qnat_posto_mly) == max(inds)
 
 qnat_posto_mly_pred <- mutate(qnat_posto_mly,
@@ -186,7 +169,7 @@ qnat_posto_mly_pred <- mutate(qnat_posto_mly,
     values = pred_munhoz
   )
 )
-tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
+tail(qnat_posto_mly_pred, 12 * length(leave_out))
 ```
 
 
@@ -237,7 +220,7 @@ for (i in 1:niter) {
   # i = 1
 
   # PSF
-  psf_model <- psf(data_train[["qnat_obs"]],
+  psf_model <- psf(train_posto_qmly[["qnat_obs"]],
     k = 3:20,
     w = 1:10,
     cycle = 12
