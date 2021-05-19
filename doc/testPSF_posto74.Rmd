@@ -73,7 +73,7 @@ Os dados importados precisam filtrados para o posto de interesse: posto 74 da ON
 
 ```{r}
 qnat_posto <- qnat_data %>% 
-  sel_station(.,station = 74) %>% 
+  sel_station(.,station = 74)  
 glimpse(qnat_posto)
 ```
 

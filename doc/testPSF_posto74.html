@@ -403,9 +403,8 @@ glimpse(qnat_data)
 #&gt; $ code_stn &lt;dbl&gt; 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1~
 #&gt; $ qnat     &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, N~</code></pre>
 <p>Os dados importados precisam filtrados para o posto de interesse: posto 74 da ONS (G. B. Munhoz).</p>
-<pre class="r"><code>posto &lt;- 74
-qnat_posto &lt;- qnat_data %&gt;% 
-  dplyr::filter(code_stn == posto)
+<pre class="r"><code>qnat_posto &lt;- qnat_data %&gt;% 
+  sel_station(.,station = 74)  
 glimpse(qnat_posto)
 #&gt; Rows: 32,141
 #&gt; Columns: 3
@@ -413,16 +412,8 @@ glimpse(qnat_posto)
 #&gt; $ code_stn &lt;dbl&gt; 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 74, 7~
 #&gt; $ qnat     &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, N~</code></pre>
 <p>Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com pelo menos 28 observações válidas e anos completos.</p>
-<pre class="r"><code># Seleciona observações com pelo menos 28 observações válidas no mês
-qnat_posto_mly &lt;- qnat_posto %&gt;% 
-  dplyr::group_by(date = floor_date(date, &quot;month&quot;), code_stn) %&gt;% 
-  dplyr::summarise(
-    qnat_obs = mean_wise(qnat), 
-    valid = nvalid(qnat), 
-    N = n(),
-    .groups = &quot;drop&quot;
-  ) %&gt;%
-  dplyr::filter(valid &gt;= 28) 
+<pre class="r"><code>qnat_posto_mly &lt;- qnat_posto %&gt;% 
+  apply_cmonth(.,ndays_thresh = 28)
 
 # check
 #str(qnat_posto_mly)
@@ -430,21 +421,13 @@ qnat_posto_mly &lt;- qnat_posto %&gt;%
 #   lhmetools::complete_dates(group = &quot;code_stn&quot;, time_step = # &quot;month&quot;) %&gt;%
 #   str()</code></pre>
 <p>Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF.</p>
-<pre class="r"><code># Anos completos
-anos_comp &lt;- qnat_posto_mly %&gt;%
-  group_by(ano = lubridate::year(date)) %&gt;%
-  tally() %&gt;%
-  filter(n == 12) %&gt;%
-  pull(ano) 
-# Usa apenas as observações dos anos completos
-qnat_posto_mly &lt;- qnat_posto_mly %&gt;%
-  filter(lubridate::year(date) %in% anos_comp)
-# check
-#qnat_posto_mly %&gt;%
-#  filter(valid != N)
-# Seleciona apenas a data e as observações de vazão 
-qnat_posto_mly &lt;- qnat_posto_mly %&gt;%
-  select(date, qnat_obs)
+<pre class="r"><code># anos completos
+anos_comp &lt;- get_cyears(qnat_posto_mly)
+
+# filtra observações com os anos completos
+qnat_posto_mly &lt;- qnat_posto_mly %&gt;% 
+  apply_cyears() %&gt;% 
+  select(date,qnat_obs)
 
 # check
 head(qnat_posto_mly)
@@ -472,22 +455,22 @@ stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
 </div>
 <div id="aplicação-do-algoritmo-psf" class="section level3">
 <h3>Aplicação do algoritmo PSF</h3>
-<p>O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo <a href="https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf">apresentou</a> um desempenho superior, baseado somente no RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica de previsão possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Nesse sentido, iremos verificar o desempenho desta técnica para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.</p>
-<pre class="r"><code>#PSF:::convert_datatype(data = qnat_posto_mly[&quot;qnat_obs&quot;])
-# dados de : 2017 e 2018
+<p>O PSF é uma técnica de previsão para séries temporais univariadas e sua premissa é de que há um padrão de sequência na série analisada. O algoritmo <a href="https://journal.r-project.org/archive/2017/RJ-2017-021/RJ-2017-021.pdf">apresentou</a> um desempenho superior, baseado na métrica RMSE, a modelos de séries temporais mais usados (autoregressivos e de suavização exponencial). Além disso, essa técnica possui o diferencial de usar as próprias previsões para retroalimentar a previsão para horizontes maiores. Iremos verificar o seu desempenho para a série hidrológica do posto 74 da ONS (G. B. Munhoz). As observações do período de 1969-2016 serão usadas para treinamento do modelo, enquanto que os dois últimos anos (2017 e 2018) serão usados para avaliar seu desempenho.</p>
+<pre class="r"><code># dados de treinamento (sem últimos dois anos)
+train_posto_qmly &lt;- qnat_posto_mly  %&gt;% 
+  get_traindt()
+# dados de teste: 2017 e 2018
 (leave_out &lt;- tail(anos_comp, n = 2))
-#&gt; [1] 2017 2018
-data_train &lt;- qnat_posto_mly %&gt;%
-  filter(!lubridate::year(date) %in% leave_out)</code></pre>
+#&gt; [1] 2017 2018</code></pre>
 <p>O treinamento do modelo no pacote <code>PSF</code> é feito através da função <code>psf</code> que requer como entrada uma série temporal univariada em um formato numérico. Além disso, é possível especificar os parâmetros: <code>k</code>,<code>w</code> e <code>cycle</code>. O parâmetro <code>cycle</code> corresponde ao número de valores de um ciclo na série temporal e deve ser adicionado caso os dados não estejam no formato <code>ts</code> (série temporal).</p>
 <pre class="r"><code># Os dados não estão no formato ts (série temporal)
-(is.ts(data_train))
+(is.ts(train_posto_qmly))
 #&gt; [1] FALSE</code></pre>
-<p>A técnica <code>PSF</code> pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros <code>k</code> e <code>w</code> que correspondem ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência e são, portanto, bastante importantes no desempenho das previsões. Ambos os parâmetros podem ser especificados por uma sequência de valores e a função <code>psf</code> irá se encarregar de selecionar o valor ótimo.</p>
+<p>A técnica <code>PSF</code> pode ser descrita em duas etapas: agrupamento e previsão. Na primeira etapa o método de clustering k-means é aplicado com o intuito de agrupar e rotular as observações do conjunto de dados. Na previsão o padrão de sequência anterior ao horizonte de previsão é extraído e a sequência é buscada nos dados históricos com a previsão sendo a média de todas as observações posteriores a sequência encontrada. Os parâmetros <code>k</code> e <code>w</code> correspondem respectivamente ao número de grupos e ao tamanho da janela usada na busca do padrão de sequência. Ambos parâmetros são bastante importantes no desempenho das previsões e podem ser especificados por uma sequência de números inteiros. A função <code>psf</code> irá automaticamente selecionar o valor ótimo para a sequência.</p>
 <pre class="r"><code># Treinamento do modelo
 set.seed(123)
 modelo_munhoz &lt;- psf(
-  data_train[[&quot;qnat_obs&quot;]],
+  train_posto_qmly[[&quot;qnat_obs&quot;]],
   k = 3:20,
   w = 1:10,
   cycle = 12
@@ -501,7 +484,8 @@ pred_munhoz &lt;- predict(modelo_munhoz,
 plot(modelo_munhoz, pred_munhoz)</code></pre>
 <p><img src="data:image/png;base64,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" width="672" /></p>
 <p>As previsões do PSF podem ser adicionadas aos dados originais.</p>
-<pre class="r"><code>inds &lt;- (nrow(data_train) + 1):(nrow(data_train) + (12 * length(leave_out)))
+<pre class="r"><code>inds &lt;- (nrow(train_posto_qmly) + 1):(nrow(train_posto_qmly) + (12 * length(leave_out)))
+
 nrow(qnat_posto_mly) == max(inds)
 #&gt; [1] TRUE
 
@@ -512,24 +496,24 @@ qnat_posto_mly_pred &lt;- mutate(qnat_posto_mly,
     values = pred_munhoz
   )
 )
-tail(qnat_posto_mly_pred, 12 * length(leave_out) + 1)
-#&gt; # A tibble: 25 x 3
+tail(qnat_posto_mly_pred, 12 * length(leave_out))
+#&gt; # A tibble: 24 x 3
 #&gt;    date       qnat_obs qnat_pred
 #&gt;    &lt;date&gt;        &lt;dbl&gt;     &lt;dbl&gt;
-#&gt;  1 2016-12-01     570.       NA 
-#&gt;  2 2017-01-01     971.      884.
-#&gt;  3 2017-02-01     806.      879.
-#&gt;  4 2017-03-01     454.      803.
-#&gt;  5 2017-04-01     259.      607.
-#&gt;  6 2017-05-01     586.      606.
-#&gt;  7 2017-06-01    1195.      876.
-#&gt;  8 2017-07-01     224.     1050.
-#&gt;  9 2017-08-01     318.      719.
-#&gt; 10 2017-09-01     156.      870.
-#&gt; # ... with 15 more rows</code></pre>
+#&gt;  1 2017-01-01     971.      884.
+#&gt;  2 2017-02-01     806.      879.
+#&gt;  3 2017-03-01     454.      803.
+#&gt;  4 2017-04-01     259.      607.
+#&gt;  5 2017-05-01     586.      606.
+#&gt;  6 2017-06-01    1195.      876.
+#&gt;  7 2017-07-01     224.     1050.
+#&gt;  8 2017-08-01     318.      719.
+#&gt;  9 2017-09-01     156.      870.
+#&gt; 10 2017-10-01     687.     1176.
+#&gt; # ... with 14 more rows</code></pre>
 <pre class="r"><code>df &lt;- qnat_posto_mly_pred[inds,]
-df_ts &lt;- xts(df[,-1], order.by = as.Date(df[[&quot;date&quot;]]))
-forecast::autoplot(df_ts, facets = FALSE) + 
+df_xts &lt;- xts(df[,-1], order.by = as.Date(df[[&quot;date&quot;]]))
+forecast::autoplot(df_xts, facets = FALSE) + 
   ylab(&quot;Q&quot;) + 
   xlab(&quot;meses&quot;) +
   theme(
@@ -547,14 +531,14 @@ forecast::autoplot(df_ts, facets = FALSE) +
 pos_stat_inds &lt;- c(2, 4:6, 9, 17, 19:20) 
 
 stat_eval &lt;- hydroGOF::gof(
-  sim = df_ts$qnat_pred, 
-  obs = df_ts$qnat_obs)[pos_stat_inds,]
+  sim = df_xts$qnat_pred, 
+  obs = df_xts$qnat_obs)[pos_stat_inds,]
 stat_eval
 #&gt;     MAE    RMSE NRMSE % PBIAS %     NSE      R2     KGE      VE 
 #&gt;  323.48  394.51  110.60   38.60   -0.28    0.12    0.09    0.42
 #names(stat_eval)</code></pre>
 <p>Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de <span class="math inline">\(KGE &gt; -0.41\)</span> indicam um desempenho melhor que a média das observações.</p>
-<p>O PSF emprega o algoritmo de agrupamento <code>kmeans</code> usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferente soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do <a href="https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE">KGE</a> foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros <code>k</code> (número de grupos) e <code>w</code> (tamanho da janela) foram variados.</p>
+<p>O PSF emprega o algoritmo de agrupamento <code>kmeans</code> usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos. Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do <a href="https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE">KGE</a> foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros <code>k</code> (número de grupos) e <code>w</code> (tamanho da janela) foram variados.</p>
 <blockquote>
 <p>Como comentado no <a href="https://books.google.com/books?id=7l0sCQAAQBAJ&amp;pg=PA163&amp;lpg=PA163&amp;dq=number%20of%20initial%20configurations%20kmena&amp;source=bl&amp;ots=n0nhiF0BwY&amp;sig=1fBoasnqNNnZcyc1PhfhLJMSFfA&amp;hl=en&amp;sa=X&amp;ved=0ahUKEwje4_O7habVAhXExFQKHSvqD60Q6AEIVDAH#v=onepage&amp;q=number%20of%20initial%20configurations%20kmena&amp;f=false">livro</a> as iterações podem ser feitas com o parâmetro <code>nstart</code>diretamente na função <code>stats::kmeans()</code> e recomendam <code>nstart = 25</code>. A função retornará o melhor resultado. Porque ele não usou isso?</p>
 </blockquote>
@@ -566,7 +550,7 @@ for (i in 1:niter) {
   # i = 1
 
   # PSF
-  psf_model &lt;- psf(data_train[[&quot;qnat_obs&quot;]],
+  psf_model &lt;- psf(train_posto_qmly[[&quot;qnat_obs&quot;]],
     k = 3:20,
     w = 1:10,
     cycle = 12
