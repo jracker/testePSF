@@ -1,0 +1,237 @@
+---
+title: "Aplicação do PSF com validação cruzada a séries de vazão naturalizada"
+author: "Jerônimo Acker D'Ornellas"
+date: "24/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objetivo 
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS. Neste arquivo aplicaremos a validação cruzada no posto 287, o qual o algoritmo PSF apresentou as melhores previsões em testes anteriores (ver arquivo testPSF_postos.Rmd). A partir da validação cruzada esperamos obter uma avaliação robusta do desempenho do algoritmo PSF e também selecionar, a partir da busca de um padrão, os parâmetros ótimos.
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+```{r, message=FALSE}
+if(!require(PSF)) install.packages("PSF")
+if(!require(timetk)) remotes::install_github("business-science/timetk")
+
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF",
+  "ModelMetrics",
+  "forecast",
+  "timetk"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+## Dados de vazão
+
+Os dados importados de vazão devem ser regularmente espaçados no tempo. Esta adequação das séries diárias, se necessária, pode ser realizada com a função `complete_dates()` do pacote **`{lhmetools}`**. Assim assegura-se que todas estações possuam 1 observação por dia e sem datas faltantes.
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+```
+
+
+Observam-se dados faltantes na série, então selecionaremos através da função `apply_cmonth` somente os meses com pelo menos 28 observações válidas. Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF através da função `apply_cyears`.
+
+```{r}
+# Média mensal das observações de vazão para todos os postos
+qnat_mly <- qnat_data %>% 
+  apply_cmonth(., ndays_thresh = 28) %>% 
+  group_by(code_stn) %>% 
+  nest() %>% 
+  mutate(
+    data = map(data, apply_cyears)
+  )
+```
+
+## Validação cruzada aplicada ao posto 287
+
+A validação cruzada é um método bastante utilizado não só para obter uma estimativa robusta do desempenho de um modelo, mas também para selecionar os melhores hiperparâmetros (parâmetros que são definidos antes de treinar um modelo). Este método irá ser usado na série hidrológica do posto de código 287 da ONS, o qual obtivemos o melhor desempenho utilizando a técnica de previsão PSF. Com isso, buscamos obter uma estimativa mais robusta do algoritmo de previsão e selecionar valores ótimos para os parâmetros `k` e `w`.
+
+```{r}
+qnatmly_287 <- qnat_mly %>%
+  sel_station(., 287) %>%
+  unnest() %>%
+  ungroup() %>%
+  select(date, qnat_obs)
+summary(qnatmly_287)
+```
+
+
+Separaremos os dados em um conjunto de treinamento e outro de teste, tal como feito anteriormente, só que dessa vez realizaremos previsões para um horizonte de 12 meses. A ideia é usar o conjunto de dados de teste após a validação cruzada para avaliar o desempenho das previsões utilizando os parâmetros selecionados.
+
+
+```{r}
+# Dados de treinamento sem o último ano
+train287_qmly <- get_traindt(qnatmly_287, yrs = 1)
+summary(train287_qmly)
+# Dados para avaliação do PSF
+test287_qmly <- get_testdt(qnatmly_287, n = 12)
+summary(test287_qmly)
+```
+
+
+Os dados de treinamento serão divididos em duas partições: treinamento e validação. Nessa forma de divisão teremos a partição de validação sempre a frente da partição de treinamento. A função `time_series_cv` do pacote `timetk` nos permite criar uma plano de amostragem começando com as observações mais atuais da série. A partir do parâmetro `assess` definimos que a partição da validação deverá ser formada de  12 meses de observações e o parâmetro `skip` fornece o número de meses que serão pulados em cada divisão. O número de divisões é selecionado pelo parâmetro `slice_limit` e um número não fixo da janela foi definido através do parâmetro `cumulative`. Aumentando o número de divisões teremos uma avaliação mais robusta do modelo, porém há um maior custo computacional.
+
+```{r}
+resample_qmly287 <- time_series_cv(
+  data = train287_qmly,
+  assess = "12 months",
+  skip = "36 months",
+  cumulative = TRUE,
+  slice_limit = 15
+)
+
+# Visualização do plano de amostragem
+# resample_qmly287 %>%
+#  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
+```
+
+ Aplicaremos o PSF a todas as divisões do conjunto de treinamento e uma coluna é adicionada com as previsões usando a média dos parâmetros `k` e `w`.
+
+
+```{r}
+qmly287_slices <- resample_qmly287 %>%
+  tk_time_series_cv_plan() %>%
+  nest(date, qnat_obs) %>%
+  pivot_wider(names_from = .key, values_from = data)
+
+# Previsões usando um horizonte de 12 meses
+cv287_qmly <- qmly287_slices %>%
+  mutate(
+    qnat_pred = map(
+      training,
+      ~ psf_reprod(.x, n = 12)
+    ),
+    model = map(
+      training,
+      ~ psf_reprod(.x, n = 12, predict = FALSE)
+    ),
+    cvparams = map(model, get_cvpar)
+  )
+
+
+# Média dos parâmetros k e w (2 e 3)
+cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
+/ length(cv287_qmly[["cvparams"]]), 0)
+
+# Adicionando  coluna com as  prevs usando parâmetros médios
+cv287_qmly <- cv287_qmly %>%
+  mutate(qnatmpar_pred = map(
+    training,
+    ~ psf_cvparam(.x, n = 12, params = cvparams)
+  ))
+```
+
+Iremos comparar o desempenho do modelo com e sem a seleção dos parâmetros pela média.
+
+
+```{r}
+avalcv_m287 <- cv287_qmly %>%
+  select(-c("model", "training", "cvparams")) %>%
+  group_by(.id) %>%
+  unnest() %>%
+  summarise(
+    KGEpred = KGE(sim = qnat_pred, obs = qnat_obs),
+    KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs)
+  )  %>% 
+  mutate(.id = factor(.id, levels = .id[order(KGEmpar)])) %>% 
+  pivot_longer(
+    cols = -c(.id),
+    names_to = "metric",
+    values_to = "valor"
+  )
+
+avalcv_m287 %>%
+ggplot(aes(x = .id, y = valor)) +
+  geom_col() + 
+  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(avalcv_m287$metric)) + 
+  theme(axis.text.x = )
+```
+
+```{r}
+avalcv_m287 %>%
+  group_by(metric) %>%
+  summarise(
+    valor = mean(valor)
+  )
+```
+
+
+
+Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de teste.
+
+
+```{r}
+# Previsões feitas com os parâmetros médios
+pcv287_mpar <- psf_cvparam(train287_qmly,
+  n = 12,
+  params = cvm_params
+)
+# Previsões sem a seleção dos parâmetros
+preds287_qmly <- psf_reprod(train287_qmly, n = 12)
+
+# Previsões e observações
+pobs287cv_qmly <- mutate(test287_qmly,
+  qnatcv_pred = NA,
+  qnat_pred = NA,
+  qnatcv_pred = replace(qnatcv_pred,
+    values = pcv287_mpar
+  ),
+  qnat_pred = replace(qnat_pred,
+    values = preds287_qmly
+  )
+)
+
+avalcvmpar_287 <- pobs287cv_qmly %>%
+  summarise(
+    KGE = KGE(sim = qnat_pred, obs = qnat_obs),
+    KGEcv = KGE(sim = qnatcv_pred, obs = qnat_obs)
+  )
+(avalcvmpar_287)
+```
+
+Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros pela média.
+
+
+```{r}
+posto287cv_xts <- xts(pobs287cv_qmly[,c("qnat_obs","qnatcv_pred","qnat_pred")], 
+                   order.by = as.Date(pobs287cv_qmly[["date"]]))
+forecast::autoplot(posto287cv_xts, facets = FALSE)+ 
+  ylab("Q") + 
+  xlab("meses") +
+  theme(
+    strip.background = element_blank(), 
+    strip.text = element_blank()
+  )
+```
+
