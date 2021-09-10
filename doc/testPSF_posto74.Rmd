@@ -16,7 +16,7 @@ knitr::opts_chunk$set(
 
 ## Objetivo 
 
-O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica do posto ONS de código 74.
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados da bacia hidrográfica da ONS. Neste arquivo a análise do algoritmo é feita para o  posto ONS de código 74.
 
 ## Pré-requisitos
 
@@ -172,7 +172,7 @@ qnat_posto_mly_pred <- mutate(qnat_posto_mly,
 tail(qnat_posto_mly_pred, 12 * length(leave_out))
 ```
 
-
+As previsões do algoritmo PSF e os valores observados para o período de 2017-2018 podem ser visualizadas no gráfico a seguir.
 
 ```{r}
 df <- qnat_posto_mly_pred[inds,]
@@ -207,7 +207,7 @@ stat_eval
 Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
 
 O PSF emprega o algoritmo de agrupamento  `kmeans` usando o método de Hartigan–Wong. Esta técnica gera resultados mais robustos ao variar aleatoriamente os valores iniciais dos centróides dos grupos.
-Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para obter avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
+Portanto diferentes soluções são obtidas cada vez que a função é executada. Por esta razão, foram feitas 10 iterações com diferentes sementes e a média do [KGE](https://www.rdocumentation.org/packages/hydroGOF/versions/0.4-0/topics/KGE) foi usada para avaliar o desempenho das predições feitas pelo PSF. Somente os parâmetros `k` (número de grupos) e `w` (tamanho da janela) foram variados.
 
 > Como comentado no [livro](https://books.google.com/books?id=7l0sCQAAQBAJ&pg=PA163&lpg=PA163&dq=number%20of%20initial%20configurations%20kmena&source=bl&ots=n0nhiF0BwY&sig=1fBoasnqNNnZcyc1PhfhLJMSFfA&hl=en&sa=X&ved=0ahUKEwje4_O7habVAhXExFQKHSvqD60Q6AEIVDAH#v=onepage&q=number%20of%20initial%20configurations%20kmena&f=false) as iterações podem ser feitas com o parâmetro `nstart`diretamente na função `stats::kmeans()` e recomendam `nstart = 25`. A função retornará o melhor resultado. Porque ele não usou isso?
 
@@ -237,3 +237,24 @@ for (i in 1:niter) {
 
 (KGE74_psf <- mean(aval74_kge))
 ```
+
+## Análise dos resultados
+
+
+```{r}
+z <- read.zoo(qnat_posto_mly, FUN = as.yearmon)
+qnat_posto_mlyts <- as.ts(z)
+
+qnat_posto_mly_decompose <-  decompose(qnat_posto_mlyts)
+plot(qnat_posto_mly_decompose)
+
+qnat_posto_mlyts %>% 
+  Acf()  %>% 
+  autoplot() %>% + labs(title = "Streamflow of ONS Station 74")
+
+qnat_posto_mlytsb <- as_tsibble(qnat_posto_mly,index = date)
+
+qnat_posto_mlyts %>% 
+  ggseasonplot()
+```
+
