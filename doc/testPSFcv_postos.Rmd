@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Objetivo 
 
-O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS. Neste arquivo aplicaremos a validação cruzada no posto 287, o qual o algoritmo PSF apresentou as melhores previsões em testes anteriores (ver arquivo testPSF_postos.Rmd). A partir da validação cruzada esperamos obter uma avaliação robusta do desempenho do algoritmo PSF e também selecionar, a partir da busca de um padrão, os parâmetros ótimos.
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS. Neste arquivo aplicaremos a validação cruzada aos postos da ONS. A partir da validação cruzada esperamos obter uma avaliação robusta do desempenho do algoritmo PSF e também selecionar, a partir da busca de um padrão, os parâmetros ótimos.
 
 ## Pré-requisitos
 
@@ -75,7 +75,7 @@ qnat_mly <- qnat_data %>%
 
 ## Validação cruzada aplicada ao posto 287
 
-A validação cruzada é um método bastante utilizado não só para obter uma estimativa robusta do desempenho de um modelo, mas também para selecionar os melhores hiperparâmetros (parâmetros que são definidos antes de treinar um modelo). Este método irá ser usado na série hidrológica do posto de código 287 da ONS, o qual obtivemos o melhor desempenho utilizando a técnica de previsão PSF. Com isso, buscamos obter uma estimativa mais robusta do algoritmo de previsão e selecionar valores ótimos para os parâmetros `k` e `w`.
+A validação cruzada é um método bastante utilizado não só para obter uma estimativa robusta do desempenho de um modelo, mas também para selecionar os melhores hiperparâmetros (parâmetros que são definidos antes de treinar um modelo). Este método irá ser usado na série hidrológica do posto de código 287 da ONS, o qual obtivemos o melhor desempenho utilizando a técnica de previsão PSF para os dos últimos anos da série. Com isso, buscamos obter uma estimativa mais robusta do algoritmo de previsão e selecionar valores ótimos para os parâmetros `k` e `w`.
 
 ```{r}
 qnatmly_287 <- qnat_mly %>%
@@ -235,3 +235,118 @@ forecast::autoplot(posto287cv_xts, facets = FALSE)+
   )
 ```
 
+## Validação cruzada aplicada a todos os 87 postos
+
+
+```{r}
+#postos_top10 <- c(287,295,145,281,278,291,279,99,277,190)
+#qnat_mly_top10 <- filter(qnat_mly, code_stn %in% postos_top10)
+  
+# Vazão prevista 
+# resample_qmly <- qnat_mly_top10 %>%
+#   mutate(dados = map(data, time_series_cv,
+#                      initial = "30 years",  # Treinamento(seta para um valor fixo)
+#                      assess = "12 months", # Validação(seta para um valor fixo)
+#                      skip = "12 months",   # cada resample tem um intervalo de 12 meses
+#                      cumulative = FALSE,
+#                      slices_limit = n()
+#   )) %>% 
+#   select(code_stn, dados) 
+
+resample_qmly <- qnat_mly %>%
+  mutate(dados = map(data, time_series_cv,
+                     #initial = "30 years",  # Treinamento(seta para um valor fixo)
+                     assess = "12 months", # Validação(seta para um valor fixo)
+                     skip = "12 months",   # cada resample tem um intervalo de 12 meses
+                     cumulative = TRUE,    # Conj de treinamento varia 
+                     slice_limit = 10     # Cada resample tem 10 partições 
+  )) %>% 
+  select(code_stn, dados) 
+
+
+# Plano de amostragem 
+resample_qmlyplan <-  resample_qmly %>% 
+  mutate(
+    dados = map(dados,tk_time_series_cv_plan)
+) 
+
+# Plano de amostragem "aninhado"
+resample_qmlyplan_nested <- resample_qmlyplan %>%
+  mutate(dados = map(dados, ~ .x %>%
+    group_by(.id, .key) %>%
+    nest())) 
+
+# Plano de amostragem no formato arrumado
+resample_qmlyplan_tidy <- resample_qmlyplan_nested %>%
+  mutate(dados = map(dados, ~ .x %>%
+    pivot_wider(names_from = .key, values_from = data)))
+
+# Aplicação do algoritmo para cada partição cv do conjunto de dados de cada posto
+# cv_qmly <- resample_qmlyplan_tidy %>%
+#   mutate(prev = map(dados, ~ .x %>%
+#                       mutate(qnat_prev = map(training,
+#                                              ~psf_reprod(.x,
+#                                                          n = 12,
+#                                                          predict = TRUE)))))
+
+# Salva os resultados
+#saveRDS(cv_qmly, file = here('output', 'cv_qmly.rds'))
+
+# Carrega os dados com as previsões
+cv_qmly <- readRDS(here("output", "cv_qmly.rds"))
+
+# Seleciona apenas as colunas 
+cv_qmly <- cv_qmly %>% 
+  select(code_stn,prev) %>% 
+  rename(dados = prev)
+
+# Seleciona apenas as previsões e os dados de teste para a avaliação
+cv_qmly_aval <- cv_qmly %>% 
+  mutate(dados = map(dados, ~ .x %>% 
+                       select(-training)))
+
+
+teste <- cv_qmly_aval %>%
+  mutate(dados = map(dados, ~ .x %>%
+    group_by(.id) %>% 
+      unnest())) 
+
+# Avalia o desempenho das previsões do algoritmo usando o índice KGE
+cv_aval <- cv_qmly_aval %>%
+  mutate(dados = map(dados, ~ .x %>%
+    group_by(.id) %>%
+    unnest(c(testing, qnat_prev)) %>%
+    summarise(
+      KGE = KGE(sim = qnat_prev, obs = qnat_obs),
+    ) %>%
+    mutate(.id = factor(.id, levels = .id[order(KGE)])) %>%
+    pivot_longer(
+      cols = -c(.id),
+      names_to = "metric",
+      values_to = "valor"
+    )))
+
+# Avalia a média do índice KGE de cada conjunto de partições da validação cruzada
+# de cada posto
+qmly_aval_mkge  <- cv_aval %>%
+  unnest(cols = c(dados)) %>% 
+  group_by(code_stn,metric) %>% 
+  summarise(valor = mean(valor))
+```
+
+Número de postos com valor do índice KGE superior a $0,3$.
+
+```{r}
+qmly_aval_mkge %>%
+  filter(valor >= 0.3) %>%
+  nrow()
+```
+
+```{r}
+qmly_aval_mkge %>%
+  filter(valor > -0.43) %>%
+  nrow()
+```
+
+
+O algoritmo apresentou previsões com índice KGE maior que $0,3$ para $(45/87) * 100$ dos postos e o modelo foi melhor que a média das observações (KGE > $-0.43$) para $(84/87)*100$ dos postos.
