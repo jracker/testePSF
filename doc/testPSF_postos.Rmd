@@ -75,6 +75,7 @@ glimpse(qnat_data)
 
 Observam-se dados faltantes na série, então selecionaremos através da função `apply_cmonth` somente os meses com pelo menos 28 observações válidas. Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF através da função `apply_cyears`.
 
+
 ```{r}
 # Média mensal das observações de vazão para todos os postos
 qnat_mly <- qnat_data %>% 
@@ -147,6 +148,21 @@ aval_qmly <- pobs_qmly %>% # groups()
 (aval_qmly)
 ```
 
+
+```{r}
+# maior que a média
+kge_maiormedia <- aval_qmly %>%
+  group_by(mKGE) %>%
+  filter(mKGE > -0.47) 
+  
+# kge > 0.3
+kge_maior <- aval_qmly %>%
+  group_by(mKGE) %>%
+  filter(mKGE > 0.3)
+  
+```
+
+
 Como KGE combina correlação, viés de variabilidade e da média, ele será priorizado nesta avaliação. Valores de $KGE > -0.41$ indicam um desempenho melhor que a média das observações.
 
 
@@ -189,6 +205,22 @@ forecast::autoplot(posto287_xts, facets = FALSE)+
     strip.background = element_blank(), 
     strip.text = element_blank()
   )
+```
+
+
+Informações dos postos(localização, nome da estação e município) estão apresentadas na variável `postos_local`.
+
+```{r}
+dropbox_link <- file.path('https://www.dropbox.com/s/d40adhw66uwueet/',
+                'VazoesNaturaisONS_D_87UHEsDirceuAssis_2018.dat?dl=1')
+  tmp_file <- fs::file_temp()
+  download.file(
+    url = dropbox_link,
+    destfile = tmp_file,
+    mode = "wb"
+  )
+
+postos_local <- extract_metadata(tmp_file, informative = TRUE)
 ```
 
 
