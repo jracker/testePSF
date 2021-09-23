@@ -45,7 +45,6 @@ moda <- function(x){
 #' @return tibble ou data frame da estação selecionada
 #'
 sel_station <- function(df, station) {
-  # Função para selecionar um posto específico via código
   df %>%
     dplyr::filter(code_stn == station)
 }
