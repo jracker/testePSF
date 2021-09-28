@@ -72,15 +72,16 @@ glimpse(qnat_posto)
 ```
 
 
+Pré-processamento dos dados do posto 74 para aplicação da função `calc_magnifSeven`.
+
 ```{r}
 qnat_mly <- qnat_posto %>% 
   apply_cmonth() 
 
 cyrs <- get_cyears(qnat_mly) 
 
-qnat_mly <- qnat_mly %>% 
-  apply_cyears()
-
+# qnat_mly <- qnat_mly %>% 
+#   apply_cyears()
 
 qnat_posto74 <- qnat_posto %>%
   dplyr::group_by(date, code_stn) %>% 
@@ -94,69 +95,63 @@ qnat_posto74 <- qnat_posto %>%
 ```
 
 
+Aplicação da função para obtenção dos sete índices.
+
 ```{r}
 magSeven <- calc_magnifSeven(qnat_posto74, yearType = "calendar")
 ```
 
 
-```{r}
- df <- df %>%
-    dplyr::group_by(date = floor_date(date, "month"), code_stn) %>%
-    dplyr::summarise(
-      qnat_obs = mean_wise(qnat),
-      valid = nvalid(qnat),
-      N = n(),
-      .groups = "drop"
-    ) %>%
-    dplyr::filter(valid >= ndays_thresh) %>%
-    select(date, code_stn, qnat_obs)
-  return(df)
-}
-```
-
-
-Tentativa de aplicar para as 87 estações.
+Pré-processamento dos dados dos 87 postos para aplicação da função `calc_magnifSeven`.
 
 ```{r}
 # Função para usar para obter os 7 índices
 apply_cdaily <- function(df) {
   # Pré-Processamento
-  qnat_arrum <- df %>% 
-   apply_cmonth()
+  qnat_arrum <- df %>%
+  dplyr::group_by(date = floor_date(date, "month")) %>%
+  dplyr::summarise(
+    qnat_obs = mean_wise(qnat),
+    valid = nvalid(qnat),
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(valid >= 28) %>%
+  select(date, qnat_obs)
   # Anos Completos
   cyrs <- get_cyears(qnat_arrum)
   # Dados completos diários
   df_arrum <- df %>% 
-    dplyr::group_by(date,code_stn) %>% 
+    dplyr::group_by(date) %>% 
     dplyr::mutate(valid = nvalid(qnat)) %>% 
     dplyr::filter(valid == 1) %>% # elimina dados faltantes
+    select(-c(valid)) %>% 
     ungroup() %>% 
-    select(date,qnat,code_stn) %>% 
-    filter(lubridate::year(date) %in% cyrs) #%>% 
-    #as.data.frame() 
+    filter(lubridate::year(date) %in% cyrs) 
   return(df_arrum)
 }
 ```
 
+
+
 ```{r}
-# Média mensal das observações de vazão para todos os postos
-qnat_dly <- qnat_data %>% 
-  apply_cdaily() %>% 
+qnat_cdly <- qnat_cdly %>%
+  ungroup() %>%
   group_by(code_stn) %>%
-  nest() %>% 
-  
+  nest() %>%
+  mutate(data = map(data, ~ .x %>% 
+                    apply_cdaily() %>% 
+                      as.data.frame()))
 ```
 
+
+Aplicação da função para obtenção dos sete índices.
 
 
 ```{r}
-qnat_data <- qnat_dly_ons() %>%
-  select(date, qnat, code_stn) %>%
-  lhmetools::complete_dates(group = "code_stn") 
-
-qnat_arrum <- qnat_data %>% 
-  map(data,apply_cdaily)
+qnat_ids <- qnat_cdly %>%
+  mutate(indices = map(data, 
+                       calc_magnifSeven, yearType = "calendar"))
 ```
-
 
 
