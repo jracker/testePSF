@@ -1,0 +1,162 @@
+---
+title: Regionalização das principais Bacias hidrográficas do Setor Elétrico Brasileiro
+  por meio de assinaturas hidrológicas.
+author: "Jerônimo Acker D'Ornellas"
+date: "27/09/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Regionalização das principais Bacias hidrográficas do Setor Elétrico Brasileiro
+  por meio de assinaturas hidrológicas.
+
+## Objetivo 
+
+O objetivo do testePSF é realizar a aplicação do algoritmo PSF em séries hidrológicas e comparar o desempenho do algoritmo com outros métodos univariados amplamente usados para os dados das bacia hidrográficas da ONS. Neste arquivo aplicaremos a validação cruzada aos postos da ONS. A partir da validação cruzada esperamos obter uma avaliação robusta do desempenho do algoritmo PSF e também selecionar, a partir da busca de um padrão, os parâmetros ótimos.
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+```{r, message=FALSE}
+if(!require(PSF)) install.packages("PSF")
+if(!require(timetk)) remotes::install_github("business-science/timetk")
+
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF",
+  "ModelMetrics",
+  "forecast",
+  "timetk",
+  "EflowStats"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+### Dados de vazão
+
+Os dados importados de vazão devem ser regularmente espaçados no tempo. Esta adequação das séries diárias, se necessária, pode ser realizada com a função `complete_dates()` do pacote **`{lhmetools}`**. Assim assegura-se que todas estações possuam 1 observação por dia e sem datas faltantes.
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+```
+
+```{r}
+qnat_posto <- qnat_data %>% 
+  sel_station(.,station = 74)  
+glimpse(qnat_posto)
+```
+
+
+```{r}
+qnat_mly <- qnat_posto %>% 
+  apply_cmonth() 
+
+cyrs <- get_cyears(qnat_mly) 
+
+qnat_mly <- qnat_mly %>% 
+  apply_cyears()
+
+
+qnat_posto74 <- qnat_posto %>%
+  dplyr::group_by(date, code_stn) %>% 
+  dplyr::mutate(valid = nvalid(qnat)) %>% 
+  dplyr::filter(valid == 1) %>% # elimina dados faltantes
+  ungroup() %>% 
+  select(date,qnat) %>% 
+  filter(lubridate::year(date) %in% cyrs) %>% 
+  as.data.frame() #%>% 
+  #mutate(qnat = as.integer(qnat))
+```
+
+
+```{r}
+magSeven <- calc_magnifSeven(qnat_posto74, yearType = "calendar")
+```
+
+
+```{r}
+ df <- df %>%
+    dplyr::group_by(date = floor_date(date, "month"), code_stn) %>%
+    dplyr::summarise(
+      qnat_obs = mean_wise(qnat),
+      valid = nvalid(qnat),
+      N = n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::filter(valid >= ndays_thresh) %>%
+    select(date, code_stn, qnat_obs)
+  return(df)
+}
+```
+
+
+Tentativa de aplicar para as 87 estações.
+
+```{r}
+# Função para usar para obter os 7 índices
+apply_cdaily <- function(df) {
+  # Pré-Processamento
+  qnat_arrum <- df %>% 
+   apply_cmonth()
+  # Anos Completos
+  cyrs <- get_cyears(qnat_arrum)
+  # Dados completos diários
+  df_arrum <- df %>% 
+    dplyr::group_by(date,code_stn) %>% 
+    dplyr::mutate(valid = nvalid(qnat)) %>% 
+    dplyr::filter(valid == 1) %>% # elimina dados faltantes
+    ungroup() %>% 
+    select(date,qnat,code_stn) %>% 
+    filter(lubridate::year(date) %in% cyrs) #%>% 
+    #as.data.frame() 
+  return(df_arrum)
+}
+```
+
+```{r}
+# Média mensal das observações de vazão para todos os postos
+qnat_dly <- qnat_data %>% 
+  apply_cdaily() %>% 
+  group_by(code_stn) %>%
+  nest() %>% 
+  
+```
+
+
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn") 
+
+qnat_arrum <- qnat_data %>% 
+  map(data,apply_cdaily)
+```
+
+
+
