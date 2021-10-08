@@ -3,6 +3,8 @@ title: "Aplicação do PSF com validação cruzada a séries de vazão naturaliz
 author: "Jerônimo Acker D'Ornellas"
 date: "24/05/2021"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -22,6 +24,7 @@ if(!require(PSF)) install.packages("PSF")
 if(!require(timetk)) remotes::install_github("business-science/timetk")
 
 pacotes <- c(
+  "dplyr",
   "here",
   "usethis",
   "data.table",
@@ -35,7 +38,10 @@ pacotes <- c(
   "hydroGOF",
   "ModelMetrics",
   "forecast",
-  "timetk"
+  "timetk",
+  "tibble",
+  "tidygeocoder",
+  "geobr"
 )
 # Carregar os pacotes
 easypackages::libraries(pacotes)
@@ -80,7 +86,7 @@ A validação cruzada é um método bastante utilizado não só para obter uma e
 ```{r}
 qnatmly_287 <- qnat_mly %>%
   sel_station(., 287) %>%
-  unnest() %>%
+  unnest(cols = data) %>%
   ungroup() %>%
   select(date, qnat_obs)
 summary(qnatmly_287)
@@ -92,7 +98,7 @@ Separaremos os dados em um conjunto de treinamento e outro de teste, tal como fe
 
 ```{r}
 # Dados de treinamento sem o último ano
-train287_qmly <- get_traindt(qnatmly_287, yrs = 1)
+train287_qmly <- get_traindt(qnatmly_287, n_years = 1)
 summary(train287_qmly)
 # Dados para avaliação do PSF
 test287_qmly <- get_testdt(qnatmly_287, n = 12)
@@ -112,8 +118,7 @@ resample_qmly287 <- time_series_cv(
 )
 
 # Visualização do plano de amostragem
-# resample_qmly287 %>%
-#  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
+# resample_qmly287 %>%  plot_time_series_cv_plan(date,qnat_obs, .interactive = FALSE)
 ```
 
  Aplicaremos o PSF a todas as divisões do conjunto de treinamento e uma coluna é adicionada com as previsões usando a média dos parâmetros `k` e `w`.
@@ -141,14 +146,29 @@ cv287_qmly <- qmly287_slices %>%
 
 
 # Média dos parâmetros k e w (2 e 3)
-cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
-/ length(cv287_qmly[["cvparams"]]), 0)
+
+# cvm_params <- round(Reduce("+", cv287_qmly[["cvparams"]])
+# / length(cv287_qmly[["cvparams"]]), 0)
+
+# opção de código mais legível
+params <- cv287_qmly[["cvparams"]] %>%
+  map_dfr(~.x)
+
+cv_med_params <- params %>%
+  summarise(across(c(k, w), ~ round(mean(.x))))
+cv_mod_params <- params %>%
+  summarise(across(c(k, w), moda))
+
 
 # Adicionando  coluna com as  prevs usando parâmetros médios
 cv287_qmly <- cv287_qmly %>%
-  mutate(qnatmpar_pred = map(
+  mutate(qnat_medpar_pred = map(
     training,
-    ~ psf_cvparam(.x, n = 12, params = cvparams)
+    ~ psf_cvparam(.x, n = 12, params = cv_med_params)
+  ),
+  qnat_modpar_pred = map(
+    training,
+    ~ psf_cvparam(.x, n = 12, params = cv_mod_params)
   ))
 ```
 
@@ -159,23 +179,48 @@ Iremos comparar o desempenho do modelo com e sem a seleção dos parâmetros pel
 avalcv_m287 <- cv287_qmly %>%
   select(-c("model", "training", "cvparams")) %>%
   group_by(.id) %>%
-  unnest() %>%
+  #unnest(cols =  c(testing, qnat_pred)) %>%
+  unnest(cols =  c(testing, qnat_pred, qnat_medpar_pred, qnat_modpar_pred)) %>%
   summarise(
     KGEpred = KGE(sim = qnat_pred, obs = qnat_obs),
-    KGEmpar = KGE(sim = qnatmpar_pred, obs = qnat_obs)
+    KGEmedpar = KGE(sim = qnat_medpar_pred, obs = qnat_obs),
+    KGEmodpar = KGE(sim = qnat_modpar_pred, obs = qnat_obs)
   )  %>% 
-  mutate(.id = factor(.id, levels = .id[order(KGEmpar)])) %>% 
+  #mutate(.id = factor(.id, levels = .id[order(KGEmedpar)])) %>% 
   pivot_longer(
     cols = -c(.id),
     names_to = "metric",
     values_to = "valor"
   )
 
+# avalcv_m287 %>%
+# ggplot(aes(x = .id, y = valor)) +
+#   geom_col() + 
+#   facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(avalcv_m287$metric)) + 
+#   theme(axis.text.x = )
+
+
 avalcv_m287 %>%
-ggplot(aes(x = .id, y = valor)) +
-  geom_col() + 
-  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(avalcv_m287$metric)) + 
-  theme(axis.text.x = )
+  select(-.id, KGE = valor) %>%
+  #pivot_longer(cols = -code_stn, names_to = "KGE", values_to = "valor") %>%
+  ggplot(aes(metric,KGE,colour = metric)) +
+  geom_boxplot()
+
+# Probabilidade de excedência do KGE (Prob(KGE>=x))
+avalcv_m287 %>%
+ select(-.id, KGE = valor) %>% 
+  group_by(metric) %>%
+  mutate(prob_exc = 1- percent_rank(KGE)) %>%
+  mutate(prob_exc = if_else(prob_exc == 1, 0.9999, prob_exc)) %>% 
+  ungroup() %>%
+  ggplot(aes(x = prob_exc, y = KGE, color = metric)) +
+  geom_line() +
+  #geom_hline(yintercept = c(-0.41, 0.3), linetype = c(3, 2)) +
+  geom_hline(yintercept = c(0.3), linetype = c(2)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6))
+
+  
 ```
 
 ```{r}
@@ -188,43 +233,44 @@ avalcv_m287 %>%
 
 
 
-Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de teste.
+Verificaremos o desempenho do modelo utilizando os parâmetros médios no conjunto de dados de teste (aqui corresponde a apenas 1 ano).
 
 
 ```{r}
 # Previsões feitas com os parâmetros médios
-pcv287_mpar <- psf_cvparam(train287_qmly,
+pcv287_medpar <- psf_cvparam(train287_qmly,
   n = 12,
-  params = cvm_params
+  params = cv_med_params
 )
+pcv287_modpar <- psf_cvparam(train287_qmly,
+  n = 12,
+  params = cv_mod_params
+)
+
 # Previsões sem a seleção dos parâmetros
 preds287_qmly <- psf_reprod(train287_qmly, n = 12)
 
 # Previsões e observações
 pobs287cv_qmly <- mutate(test287_qmly,
-  qnatcv_pred = NA,
-  qnat_pred = NA,
-  qnatcv_pred = replace(qnatcv_pred,
-    values = pcv287_mpar
-  ),
-  qnat_pred = replace(qnat_pred,
-    values = preds287_qmly
-  )
+  qnat_pred = preds287_qmly,
+  qnat_medpar_pred = pcv287_medpar,
+  qnat_modpar_pred = pcv287_modpar
 )
 
 avalcvmpar_287 <- pobs287cv_qmly %>%
   summarise(
     KGE = KGE(sim = qnat_pred, obs = qnat_obs),
-    KGEcv = KGE(sim = qnatcv_pred, obs = qnat_obs)
+    KGE_medpar = KGE(sim = qnat_medpar_pred, obs = qnat_obs),
+    KGE_modpar = KGE(sim = qnat_modpar_pred, obs = qnat_obs)
   )
-(avalcvmpar_287)
+avalcvmpar_287
 ```
 
 Observamos, baseado na métrica KGE, uma pequena melhora no modelo utilizando a seleção dos parâmetros pela média.
 
 
 ```{r}
-posto287cv_xts <- xts(pobs287cv_qmly[,c("qnat_obs","qnatcv_pred","qnat_pred")], 
+posto287cv_xts <- xts(pobs287cv_qmly[,c("qnat_obs","qnat_modpar_pred","qnat_medpar_pred")], 
                    order.by = as.Date(pobs287cv_qmly[["date"]]))
 forecast::autoplot(posto287cv_xts, facets = FALSE)+ 
   ylab("Q") + 
@@ -234,6 +280,9 @@ forecast::autoplot(posto287cv_xts, facets = FALSE)+
     strip.text = element_blank()
   )
 ```
+
+
+
 
 ## Validação cruzada aplicada a todos os 87 postos
 
@@ -252,6 +301,8 @@ forecast::autoplot(posto287cv_xts, facets = FALSE)+
 #                      slices_limit = n()
 #   )) %>% 
 #   select(code_stn, dados) 
+
+set.seed(1)
 
 resample_qmly <- qnat_mly %>%
   mutate(dados = map(data, time_series_cv,
@@ -280,73 +331,419 @@ resample_qmlyplan_nested <- resample_qmlyplan %>%
 resample_qmlyplan_tidy <- resample_qmlyplan_nested %>%
   mutate(dados = map(dados, ~ .x %>%
     pivot_wider(names_from = .key, values_from = data)))
+```
 
-# Aplicação do algoritmo para cada partição cv do conjunto de dados de cada posto
-# cv_qmly <- resample_qmlyplan_tidy %>%
-#   mutate(prev = map(dados, ~ .x %>%
-#                       mutate(qnat_prev = map(training,
-#                                              ~psf_reprod(.x,
-#                                                          n = 12,
-#                                                          predict = TRUE)))))
+
+```{r}
+
+if(fs::file_exists(here('output', 'cv_qmly_2methods.rds'))){
+  
+  cv_qmly <- readRDS(here("output", "cv_qmly_2methods.rds"))
+  
+} else {
+  
+  #Aplicação do algoritmo para cada partição cv do conjunto de dados de cada posto
+tictoc::tic()
+cv_qmly <- resample_qmlyplan_tidy %>%
+  mutate(
+    prev = map(dados, ~ .x %>%
+      mutate(
+        qnat_prev = map(
+          training,
+          ~ psf_reprod(.x,
+            n = 12,
+            predict = TRUE
+          )
+        ),
+        model = map(
+          training,
+          ~ psf_reprod(.x,
+            n = 12,
+            predict = FALSE
+          )
+        )
+      ))
+  )
+
+tictoc::toc()
+#613.854 sec elapsed (~10 min)
+
+# adicionando parametros dos modelos de cada slice
+cv_qmly <- cv_qmly %>%
+  mutate(prev = map(prev, ~ .x %>%
+    ungroup() %>%
+    mutate(cvparams = map(
+      model,
+      ~ .x %>%
+        get_cvpar() #%>% flatten_int()
+    ))))
+
+## check 
+# cv_qmly[["prev"]][[1]]
+# cv287_qmly
 
 # Salva os resultados
-#saveRDS(cv_qmly, file = here('output', 'cv_qmly.rds'))
+saveRDS(cv_qmly, file = here('output', 'cv_qmly_2methods.rds'))
 
-# Carrega os dados com as previsões
-cv_qmly <- readRDS(here("output", "cv_qmly.rds"))
+}
+```
 
-# Seleciona apenas as colunas 
-cv_qmly <- cv_qmly %>% 
-  select(code_stn,prev) %>% 
+
+## Previsões usando a média e a moda dos parâmetros para o período de treinamento 
+
+
+### Moda e média dos parâmetros 
+
+```{r}
+# Carrega os dados com modelos e previsões de cada slice
+#cv_qmly <- readRDS(here("output", "cv_qmly.rds"))
+
+cv_qmly <- cv_qmly %>%
+  ungroup() %>%
+  # Seleciona apenas as colunas 
+  select(-dados) %>% 
   rename(dados = prev)
 
+#cv_qmly[["dados"]][[1]]
+#cv_qmly[["dados"]][[1]][["cvparams"]]
+
 # Seleciona apenas as previsões e os dados de teste para a avaliação
-cv_qmly_aval <- cv_qmly %>% 
-  mutate(dados = map(dados, ~ .x %>% 
-                       select(-training)))
+#cv_qmly_aval <- cv_qmly %>% 
+#  mutate(dados = map(dados, ~ .x %>% 
+#                       select(-training)))
 
+# agrupa dados por estacao
+by_stn <- cv_qmly %>%
+  group_by(code_stn) 
 
-teste <- cv_qmly_aval %>%
-  mutate(dados = map(dados, ~ .x %>%
-    group_by(.id) %>% 
-      unnest())) 
+# obtem a moda e a media dos parametros nas slices
+by_stn <- mutate(by_stn,
+  params_med = map(
+    dados,
+    ~ .x %>%
+      select(cvparams) %>%
+      map_dfr(~ .x %>% map_dfr(~.x) %>% 
+            summarise(across(c(k, w), ~ round(mean(.x)))))
+    #%>%
+    #  map(~ .x %>% summarise(across(c(k, w), ~ round(mean(.x)))))
+  ),
+  params_mod = map(
+    dados,
+    ~ .x %>%
+      select(cvparams) %>%
+      map_dfr(~ .x %>% map_dfr(~.x) %>% 
+            summarise(across(c(k, w), moda)))
+    #%>%
+    #  map(~ .x %>% summarise(across(c(k, w), ~ round(mean(.x)))))
+  )
+) 
 
-# Avalia o desempenho das previsões do algoritmo usando o índice KGE
-cv_aval <- cv_qmly_aval %>%
-  mutate(dados = map(dados, ~ .x %>%
-    group_by(.id) %>%
-    unnest(c(testing, qnat_prev)) %>%
-    summarise(
-      KGE = KGE(sim = qnat_prev, obs = qnat_obs),
-    ) %>%
-    mutate(.id = factor(.id, levels = .id[order(KGE)])) %>%
-    pivot_longer(
-      cols = -c(.id),
-      names_to = "metric",
-      values_to = "valor"
-    )))
-
-# Avalia a média do índice KGE de cada conjunto de partições da validação cruzada
-# de cada posto
-qmly_aval_mkge  <- cv_aval %>%
-  unnest(cols = c(dados)) %>% 
-  group_by(code_stn,metric) %>% 
-  summarise(valor = mean(valor))
+by_stn[["params_med"]]
+by_stn[["params_mod"]]
+by_stn[["dados"]][[1]]
 ```
 
-Número de postos com valor do índice KGE superior a $0,3$.
+### Previsões para o período de teste 
 
 ```{r}
-qmly_aval_mkge %>%
-  filter(valor >= 0.3) %>%
-  nrow()
+tictoc::tic()
+
+preds_test <- map_df(
+  by_stn$code_stn,
+  function(icode) {
+    # icode = 6
+    data_stn <- filter(by_stn, code_stn == icode)
+
+    pars_med <- unlist(data_stn$params_med)
+    pars_mod <- unlist(data_stn$params_mod)
+
+    data <- data_stn %>%
+      ungroup() %>%
+      select(dados) %>%
+      unnest(dados) %>%
+      mutate(
+        code_stn = icode,
+        preds_med = map(
+          training,
+          ~ .x %>% psf_cvparam(n = 12, params = pars_med)
+        ),
+        preds_mod = map(
+          training,
+          ~ .x %>% psf_cvparam(n = 12, params = pars_mod)
+        )
+      ) %>%
+      relocate(code_stn)
+  }
+)
+tictoc::toc()
+# 36.773 sec elapsed
+preds_test
+```
+
+
+### Avaliação 
+
+Cálculo do KGE para as previsões de cada slice.
+
+```{r}
+cv_aval <- preds_test %>%
+  select(code_stn, testing, contains("preds_")) %>%
+  # 870 (10 slices x 87 stns) x 12 meses (periodo teste)
+  unnest(cols = c(testing, preds_med, preds_mod)) %>%
+  group_by(code_stn) %>%
+  summarise(
+      KGE_parsmed = KGE(sim = preds_med, obs = qnat_obs),
+      KGE_parsmod = KGE(sim = preds_mod, obs = qnat_obs)
+    ) 
+cv_aval_long <- cv_aval %>%
+  pivot_longer(cols = -code_stn, names_to = "metric", values_to = "KGE") %>%
+  mutate(metric = str_replace_all(metric, "KGE_", ""))
+
+```
+
+Gráficos do KGE
+
+```{r}
+bxplot_kge <- cv_aval_long %>%
+  #pivot_longer(cols = -code_stn, names_to = "KGE", values_to = "valor") %>%
+  ggplot(aes(metric, KGE, fill = metric)) +
+  geom_boxplot() 
+bxplot_kge  
+
+# Probabilidade de excedência do KGE (Prob(KGE>=x))
+plot_pexc <- cv_aval_long %>%
+  arrange(metric) %>%
+  group_by(metric) %>%
+  mutate(prob_exc = 1- percent_rank(KGE)) %>%
+  mutate(prob_exc = if_else(prob_exc == 1, 0.9999, prob_exc)) %>% 
+  ungroup() %>%
+  ggplot(aes(x = prob_exc, y = KGE, color = metric)) +
+  geom_line() +
+  #geom_hline(yintercept = c(-0.41, 0.3), linetype = c(3, 2)) +
+  geom_hline(yintercept = c(0.3), linetype = c(2)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6))
+plot_pexc
+```
+
+
+```{r}
+teste <- filter(cv_aval_long,grepl('parsmod',metric))
+  
+resultados <- teste %>% 
+   filter(KGE >= 0.3) #%>% 
+ # nrow() #67.81609195%
 ```
 
 ```{r}
-qmly_aval_mkge %>%
-  filter(valor > -0.43) %>%
-  nrow()
+teste %>% 
+   filter(KGE >= 0.3) %>% 
+   nrow() #67.81609195%
 ```
 
 
-O algoritmo apresentou previsões com índice KGE maior que $0,3$ para $(45/87) * 100$ dos postos e o modelo foi melhor que a média das observações (KGE > $-0.43$) para $(84/87)*100$ dos postos.
+```{r}
+teste %>% 
+   filter(KGE >= -0.47) %>% #View()
+  nrow() #100%
+```
+
+
+
+> Instruções: 
+>
+> - revisar o código para ver se a avaliação faz sentido para você.
+> 
+> - atualizar resumo com os resultados (usar a moda)
+>
+> - replicar gráfico da pexc com pontos coloridos para identificar o desempenho por região
+>
+> - fazer boxplot do KGE por região das BHs
+
+
+### Análise dos resultados
+
+Seleciona apenas os resultados do modelo do PSF usando a seleção dos parâmetros
+pela moda.
+
+```{r}
+aval_pmod <- filter(cv_aval_long,grepl('parsmod',metric)) %>% 
+  select(code_stn,KGE)
+```
+
+Dados com as coordenadas das estações.
+
+```{r}
+# dropbox_link <- file.path('https://www.dropbox.com/s/d40adhw66uwueet/',
+#                 'VazoesNaturaisONS_D_87UHEsDirceuAssis_2018.dat?dl=1')
+#   tmp_file <- fs::file_temp()
+#   download.file(
+#     url = dropbox_link,
+#     destfile = tmp_file,
+#     mode = "wb"
+#   )
+# 
+# postos_info <- extract_metadata(tmp_file, informative = TRUE)
+# latlog <- postos_info %>% 
+#   select(latitude,longitude)
+# 
+# saveRDS(postos_info, file = here('output', 'coord_postos.rds'))
+
+postos_info <-  readRDS(here("output", "coord_postos.rds"))
+```
+
+Subsistemas do Sistema Interligado Nacional.
+
+```{r}
+subsis <- list(
+  seco = c("Minas Gerais", "Goiás", "Mato Grosso", "Mato Grosso do Sul", "São Paulo", "Rio de Janeiro", "Espírito Santo"),
+  norte = c("Acre", "Amapá", "Amazonas", "Pará", "Rondônia", "Roraima", "Tocantins"),
+  sul = c("Rio Grande do Sul", "Santa Catarina", "Paraná"),
+  nord = c("Alagoas", "Bahia", "Ceará", "Maranhão", "Paraíba", "Pernambuco", "Piauí", "Rio Grande do Norte", "Sergipe")
+)
+```
+
+
+Resultado da métrica KGE para cada estação com informação do estado e subsistema.
+
+```{r}
+# reg_postos <- postos_info %>%
+#   reverse_geocode(lat = latitude, long = longitude, method = 'osm', full_results = TRUE) %>%
+#   dplyr::select(latitude,longitude,estacao_codigo,address,state)
+# 
+# 
+# saveRDS(reg_postos, file = here('output', 'reg_postos.rds'))
+
+# Localizações dos estados das estações
+reg_postos<- readRDS(here("output", "reg_postos.RDS")) %>% 
+  rename(code_stn = estacao_codigo) %>% 
+  select(code_stn,state)
+
+
+# Adiciona coluna com os subsistemas de cada estado
+reg_postos$subsistemas <- sapply(reg_postos$state, 
+                 function(x) names(subsis)[grep(x,subsis)])
+
+
+# Junta as estações e localização com os valores da métrica KGE
+avalpmod_reg <- aval_pmod %>% 
+  inner_join(
+    .,
+    reg_postos,
+    by = "code_stn"
+  )  
+```
+
+
+Boxplot por região das Bacias Hidrográficas
+
+```{r}
+# Muda nome das colunas e linhas para melhorar a visualização do boxplot
+avalpmod_reg_tidy <- avalpmod_reg %>%
+  rename(Subsistemas = subsistemas) %>% 
+  mutate(Subsistemas = recode(Subsistemas, nord = 'Nordeste',
+                              norte = 'Norte',
+                              seco = "Sudeste/Centro-Oeste",
+                              sul = "Sul")) 
+
+avalpmod_reg_tidy %>% ggplot(aes(x = Subsistemas, y = KGE)) +
+  geom_boxplot(aes(fill = Subsistemas), color = "black") +
+  # coord_flip() +
+  # facet_wrap(~stats, ncol = 2) +
+  # labs(x = "Value", y = "Frequency") +
+  theme_bw()
+```
+
+
+Gráfico com cores dos pontos representando os subsistemas das estações e o tamanho relacionado ao desempenho do modelo de acordo com a métrica KGE.
+
+```{r}
+# Para fazer a junção
+postos_info <- rename(postos_info,code_stn = estacao_codigo)
+# Junta as informações das coordenadas para o plot
+avalpmod_coord <- avalpmod_reg_tidy %>% 
+  inner_join(.,
+             postos_info,
+             by = "code_stn")
+
+states <- read_state(year=2019)
+
+no_axis <- theme(axis.title=element_blank(),
+                   axis.text=element_blank(),
+                   axis.ticks=element_blank())
+
+ggplot() +
+  geom_sf(data = states, fill = "#FFFFFF", color = "#000000", size = .15, show.legend = TRUE) +
+  # labs(subtitle = "Estações do SIN", size = 8) +
+  theme_minimal() +
+  no_axis +
+  geom_point(
+    data = avalpmod_coord,
+    aes(
+      x = longitude,
+      y = latitude,
+      color = Subsistemas,
+      size = KGE
+    )
+  ) +
+  # scale_size_continuous(name = "Estações") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+> - replicar gráfico da pexc com pontos coloridos para identificar o desempenho por região
+
+Probabilidade de excedência 
+
+```{r}
+avalpmod_exc <- avalpmod_reg_tidy %>% 
+  select(code_stn,KGE,Subsistemas)
+
+# Probabilidade de excedência do KGE (Prob(KGE>=x))
+plot_pexc_reg <- avalpmod_exc %>%
+  arrange(KGE) %>%
+  group_by(Subsistemas) %>%
+  mutate(prob_exc = 1 - percent_rank(KGE)) %>%
+  mutate(prob_exc = if_else(prob_exc == 1, 0.9999, prob_exc)) %>% 
+  ungroup() %>%
+  ggplot(aes(x = prob_exc, y = KGE, color = Subsistemas)) +
+  geom_point() +
+  #geom_hline(yintercept = c(-0.41, 0.3), linetype = c(3, 2)) +
+  geom_hline(yintercept = c(0.3), linetype = c(2)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6))
+plot_pexc_reg
+```
+
+```{r}
+avalpmod_exc %>% 
+  group_by(Subsistemas) %>% 
+  select(-code_stn) %>% 
+  summarize_all("mean") %>% View()
+  
+```
+
+
+Análise da quantidade de postos em cada região em relação a valores da métrica KGE.
+
+
+```{r}
+# Quantidade de estações por região
+preg <- avalpmod_reg_tidy %>%
+  group_by(Subsistemas) %>%
+  count()
+
+
+# KGE >= 0.3
+preg_03 <- avalpmod_reg_tidy %>% 
+  group_by(Subsistemas) %>% 
+  filter(KGE >= 0.3) %>% 
+  count() 
+```
+
+
+
