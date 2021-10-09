@@ -334,6 +334,41 @@ resample_qmlyplan_tidy <- resample_qmlyplan_nested %>%
 ```
 
 
+Visualizar plot do plano de amostragem para uma estação.
+
+```{r}
+resample_vis <- qnat_mly %>%
+  mutate(dados = map(data, time_series_cv,
+    # initial = "30 years",  # Treinamento(seta para um valor fixo)
+    assess = "12 months", # Validação(seta para um valor fixo)
+    skip = "12 months", # cada resample tem um intervalo de 12 meses
+    cumulative = TRUE, # Conj de treinamento varia
+    slice_limit = 10 # Cada resample tem 10 partições
+  ))
+
+# Seleciona o plano de amostragem CV da estação 6 
+pamos_stn6 <- resample_vis %>%
+  mutate(
+    dados = map(dados, tk_time_series_cv_plan)
+  ) %>% 
+  filter(code_stn == 6) 
+        
+pamos_stn6 <- pamos_stn6$dados 
+pamos_stn6 <- pamos_stn6[[1]]
+
+pamos_stn6 %>%
+  plot_time_series_cv_plan(date,
+    qnat_obs,
+    .facet_ncol = 2,
+    .line_alpha = 0.5,
+    .interactive = FALSE,
+    .title = "Plano de validação cruzada de séries temporais"
+  )
+```
+
+
+
+
 ```{r}
 
 if(fs::file_exists(here('output', 'cv_qmly_2methods.rds'))){
@@ -481,7 +516,7 @@ preds_test
 ```
 
 
-### Avaliação 
+### Avaliação usando KGE
 
 Cálculo do KGE para as previsões de cada slice.
 
@@ -501,7 +536,7 @@ cv_aval_long <- cv_aval %>%
 
 ```
 
-Gráficos do KGE
+Gráficos do KGE.
 
 ```{r}
 bxplot_kge <- cv_aval_long %>%
@@ -647,11 +682,20 @@ avalpmod_reg_tidy <- avalpmod_reg %>%
                               sul = "Sul")) 
 
 avalpmod_reg_tidy %>% ggplot(aes(x = Subsistemas, y = KGE)) +
-  geom_boxplot(aes(fill = Subsistemas), color = "black") +
+  geom_boxplot(aes(fill = Subsistemas),
+    color = "black",
+    outlier.size = 3
+  ) +
   # coord_flip() +
   # facet_wrap(~stats, ncol = 2) +
   # labs(x = "Value", y = "Frequency") +
-  theme_bw()
+  theme_bw() +
+  theme(
+    #plot.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20),
+    text = element_text(size=20)
+  )
 ```
 
 
@@ -691,7 +735,8 @@ ggplot() +
     panel.border = element_blank(),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank()
-  )
+  ) #+
+   #theme_bw() 
 ```
 
 
@@ -708,14 +753,23 @@ plot_pexc_reg <- avalpmod_exc %>%
   arrange(KGE) %>%
   group_by(Subsistemas) %>%
   mutate(prob_exc = 1 - percent_rank(KGE)) %>%
-  mutate(prob_exc = if_else(prob_exc == 1, 0.9999, prob_exc)) %>% 
+  mutate(prob_exc = if_else(prob_exc == 1, 0.9999, prob_exc)) %>%
   ungroup() %>%
   ggplot(aes(x = prob_exc, y = KGE, color = Subsistemas)) +
-  geom_point() +
-  #geom_hline(yintercept = c(-0.41, 0.3), linetype = c(3, 2)) +
+  labs(x = "Probabilidade de Excedência") +
+  geom_point(size = 5, aes(shape = Subsistemas)) +
+  # geom_hline(yintercept = c(-0.41, 0.3), linetype = c(3, 2)) +
   geom_hline(yintercept = c(0.3), linetype = c(2)) +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + 
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 6))
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  theme_bw() +
+  theme(
+    # plot.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20),
+    text = element_text(size = 20)
+  ) 
+
 plot_pexc_reg
 ```
 
@@ -724,7 +778,6 @@ avalpmod_exc %>%
   group_by(Subsistemas) %>% 
   select(-code_stn) %>% 
   summarize_all("mean") %>% View()
-  
 ```
 
 
@@ -746,4 +799,115 @@ preg_03 <- avalpmod_reg_tidy %>%
 ```
 
 
+
+## Análise usando outras métricas (já usando o modelo da moda)
+
+
+```{r}
+cv_metricas <- preds_test %>%
+  select(code_stn, testing, contains("preds_")) %>%
+  # 870 (10 slices x 87 stns) x 12 meses (periodo teste)
+  unnest(cols = c(testing,preds_mod)) %>%
+  group_by(code_stn) %>%
+  summarise(
+      KGE = KGE(sim = preds_mod, obs = qnat_obs),
+      PBIAS = pbias(sim = preds_mod, obs = qnat_obs),
+      NRMSE = nrmse(sim = preds_mod, obs = qnat_obs),
+      NSE =NSE(sim = preds_mod, obs = qnat_obs)
+    ) 
+# cv_aval_metricas <- cv_metricas %>%
+#   pivot_longer(cols = -code_stn, names_to = "metric", values_to = "Valor") #%>%
+#   mutate(metric = str_replace_all(metric, "KGE_", ""))
+```
+
+
+Boxplot PBIAS e NRMSE
+
+```{r}
+aval_metricas <- cv_metricas %>%
+  inner_join(
+    .,
+    reg_postos,
+    by = "code_stn"
+  )
+```
+
+
+```{r}
+aval_metricas_reg <- aval_metricas %>%
+  rename(Subsistemas = subsistemas) %>%
+  mutate(Subsistemas = recode(Subsistemas,
+    nord = "Nordeste",
+    norte = "Norte",
+    seco = "Sudeste/Centro-Oeste",
+    sul = "Sul"
+  ))
+
+# PBIAS
+aval_pbias <- aval_metricas_reg %>% ggplot(aes(x = Subsistemas, y = PBIAS)) +
+  geom_boxplot(aes(fill = Subsistemas),
+    color = "black",
+    outlier.size = 3
+  ) +
+  # coord_flip() +
+  # facet_wrap(~stats, ncol = 2) +
+  # labs(x = "Value", y = "Frequency") +
+  theme_bw() +
+  theme(
+    # plot.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20),
+    text = element_text(size = 20)
+  )
+```
+
+```{r}
+# ggsave(plot = aval_pbias, file = "grafico.png",
+#         type = "cairo-png",  bg = "transparent",
+#         width = 50, height = 30, units = "cm", dpi = 800)
+```
+
+```{r}
+aval_nrmse <- aval_metricas_reg %>% ggplot(aes(x = Subsistemas, y = NRMSE)) +
+  geom_boxplot(aes(fill = Subsistemas),
+    color = "black",
+    outlier.size = 3
+  ) +
+  # coord_flip() +
+  # facet_wrap(~stats, ncol = 2) +
+  # labs(x = "Value", y = "Frequency") +
+  theme_bw() +
+  theme(
+    # plot.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20),
+    text = element_text(size = 20)
+  )
+```
+
+
+Comparação com outros artigos (NSE)
+
+```{r}
+aval_nse <- aval_metricas_reg %>% ggplot(aes(x = Subsistemas, y = NSE)) +
+  geom_boxplot(aes(fill = Subsistemas),
+    color = "black",
+    outlier.size = 3
+  ) +
+  # coord_flip() +
+  # facet_wrap(~stats, ncol = 2) +
+  # labs(x = "Value", y = "Frequency") +
+  theme_bw() +
+  theme(
+    # plot.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20),
+    text = element_text(size = 20)
+  )
+```
+
+```{r}
+aval_metricas_reg %>% 
+  select(code_stn,NSE) %>% View()
+```
 
