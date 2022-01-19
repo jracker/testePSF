@@ -119,7 +119,6 @@ get_traindt <- function(df, yrs = 2) {
   return(data)
 }
 
-
 #' Selecionar dados de teste para avaliação do PSF
 #'
 #' @param df data frame com dados de vazão mensal
@@ -355,3 +354,120 @@ psf_cvparam <- function(df, n = 12, params = NULL) {
   )
   preds <- predict(model, n.ahead = n)
 }
+
+
+
+psfr_lt <- function(df, n = 24, predict = TRUE, model = FALSE) {
+  set.seed(1) # p/ reprodutibilidade
+  model <- psf(df[, "qnat_obs"], cycle = 1)
+  preds <- predict(model, n.ahead = n)
+  
+  if (predict) return(preds[length(preds)]) 
+  
+  model
+}
+
+
+mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
+  # Starting time for the predictions
+  ref_dates <- as.Date(paste0(yr_ref, "-", ini_mon, "-1")) %>%
+    as_tibble() %>%
+    rename(S = value)
+  # Return tibble with the starting date and the filtered data (using S)
+  qnat_ref <- tibble(ref_dates, data = list(dat)) %>%
+    mutate(
+      data = map2(data, S, ~ filter(..1, date <= ..2))
+      # L1 = map(
+      #   dados_filtrados,
+      #   ~ psf_reprod(.x, n = 1, predict = TRUE)
+      # )
+    )
+  
+  util_lt <- tibble(lead_time = 1:nmonths) %>%
+    pivot_wider(
+      names_from = lead_time,
+      values_from = lead_time,
+      names_prefix = "L"
+    )
+  
+  qnat_lt <- cbind(qnat_ref, util_lt)
+  
+  qnat_model <- qnat_lt %>% 
+    mutate(across(-c(data,S),
+                  ~ map2(.x,
+                         data,
+                         ~ psf_reprod_teste(.y, 
+                                            n = .x, 
+                                            predict = FALSE))))
+  
+  qnat_params <- qnat_model %>% 
+    mutate(across(-c(data,S),
+                  ~ map(.x,
+                        ~ get_cvpar(.))))
+  
+  vars_lt <- names(qnat_params)[3:14]
+  for (i in vars_lt){
+    qnat_params  <- qnat_params %>% 
+      unnest_wider(i, names_sep = "_")
+  }  
+  
+  
+  qnat_params <- qnat_params %>%
+    rowwise() %>% 
+    mutate(
+      k =  moda(c_across(ends_with("k"))), 
+      w = moda(c_across(ends_with("w")))
+    ) %>% 
+    select(S,k,w)
+  
+  qnat_mprev <- qnat_lt %>% 
+    mutate(across(-c(data,S),
+                  ~ map2_dbl(.x,
+                             data,
+                             ~ psf_reprod_teste(.y, n = .x)))) %>% 
+    select(-data) %>% 
+    group_by(S) %>% 
+    nest() %>% 
+    rename(qnat_prev = data) %>% 
+    left_join(.,qnat_params)
+}
+
+
+
+getl_mteste <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
+  # Starting time for the predictions
+  ref_dates <- as.Date(paste0(yr_ref, "-", ini_mon, "-1")) %>%
+    as_tibble() %>%
+    rename(S = value)
+  
+  util_lt <- tibble(lead_time = 1:nmonths) %>%
+    pivot_wider(
+      names_from = lead_time,
+      values_from = lead_time,
+      names_prefix = "L"
+    )
+  #Return tibble with the starting date and the filtered data (using S)
+  qnat_ref <- tibble(ref_dates, data = list(dat)) %>%
+    cbind(.,util_lt)
+  
+  qnat_ref2 <- qnat_ref %>%
+    mutate(
+      data = map2(data, S, ~ filter(..1, (date > ..2) & date <= ..2 %m+% months(12)))
+    )
+  
+  qnat_ref2 %>% 
+    mutate(
+      across(
+        -c(data, S),
+        ~ map2_dbl(
+          .x,
+          data,
+          ~ .y$qnat_obs[.x]
+        ))) %>% 
+    nest(qnat_obs = L1:L12) %>% 
+    select(-data)
+}
+
+
+
+
