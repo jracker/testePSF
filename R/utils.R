@@ -71,6 +71,7 @@ apply_cmonth <- function(df, ndays_thresh = 28) {
   return(df)
 }
 
+
 #' Identifica anos completos, ou seja, com 12 meses de observações válidas
 #'  
 #' @param df um tibble ou data frame
@@ -102,6 +103,54 @@ apply_cyears <- function(df) {
     filter(lubridate::year(date) %in% cyrs)
   return(df_cyrs)
 }
+
+
+#' Filtragem dos dados com meses e anos completos para uso no modelo de médias
+#'  
+#' Usar depois de agrupar os dados caso selecionado mais de um posto
+#'  
+#'  @param df um tibble ou data frame
+#'  
+#'  @param ndays_thresh  um inteiro
+#'  
+#'  @return df um tibble ou data frame com meses e anos completos
+#'  
+preprocess_mlg <- function(df, ndays_thresh = 28) {
+  df_cmonth <- df %>%
+    dplyr::group_by(date = floor_date(date, "month")) %>%
+    dplyr::summarise(
+      qnat_obs = mean_wise(qnat),
+      valid = nvalid(qnat),
+      N = n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::filter(valid >= ndays_thresh) %>%
+    select(date, qnat_obs)
+  cyrs <- get_cyears(df_cmonth)
+  df_cyrs <- df %>%
+    filter(lubridate::year(date) %in% cyrs)
+}
+
+#' Filtragem dos dados para utilização na função mprev_lt
+#'  
+#' Caso o número de linhas não é divisível por 12, retira a primeira linha e 
+#' assim por diante
+#' 
+#'  @param df um tibble ou data frame
+#'  
+#'  @return df um tibble ou data frame com nrows %% 12 == 0
+#'  
+
+datprep_prevlt <- function(df) {
+  rows <- nrow(df)
+  rows.aux <- nrow(df) # número de linhas dos dados qnat_obs
+  while (rows.aux %% 12 != 0) {
+    rows.aux <- rows.aux - 1 # retorna linha que é divisível por 12
+  }
+  start_row <- (rows - rows.aux) + 1
+  return(df[start_row:(rows), ])
+}
+
 
 #' Seleciona dados de treinamento para aplicação do PSF
 #'
@@ -392,33 +441,67 @@ psf_cvparam <- function(df, n = 12, params = NULL) {
 
 
 # Modelo de previsões médias
+# meanlg <- function(df,year = 2016){
+#   
+#   longterm_monthly_qnat <- calc_longterm_monthly_stats(
+#     data = df,
+#     dates = "date",
+#     values = "qnat",
+#     start_year = "1969",
+#     end_year = year
+#   )
+#   
+#   longterm_monthly_qnat["Month"] <- seq(1, 13)
+#   
+#   longterm_monthly_qnat <- longterm_monthly_qnat %>%
+#     slice(1:n() - 1) %>%
+#     select(Month, Mean) %>%
+#     pivot_wider(
+#       names_from = Month,
+#       values_from = Mean,
+#       names_prefix = "L"
+#     ) %>% 
+#     pivot_longer(
+#       cols = starts_with("L"),
+#       names_to = "L",
+#       values_to = "qnat_mean"
+#     )
+#   
+#   
+#   
+#   
+# 
+# }
+
 meanlg <- function(df,year = 2016){
   
   longterm_monthly_qnat <- calc_longterm_monthly_stats(
     data = df,
     dates = "date",
     values = "qnat",
-    start_year = "1969",
-    end_year = year
+    #start_year = "1969",
+    end_year = year,
+    ignore_missing = FALSE
   )
   
-  longterm_monthly_qnat["Month"] <- seq(1, 13)
-  
-  longterm_monthly_qnat <- longterm_monthly_qnat %>%
-    slice(1:n() - 1) %>%
-    select(Month, Mean) %>%
-    pivot_wider(
-      names_from = Month,
-      values_from = Mean,
-      names_prefix = "L"
-    ) %>% 
-    pivot_longer(
-      cols = starts_with("L"),
-      names_to = "L",
-      values_to = "qnat_mean"
-    )
-
+  # longterm_monthly_qnat["Month"] <- seq(1, 13)
+  # 
+  # longterm_monthly_qnat <- longterm_monthly_qnat %>%
+  #   slice(1:n() - 1) %>%
+  #   select(Month, Mean) %>%
+  #   pivot_wider(
+  #     names_from = Month,
+  #     values_from = Mean,
+  #     names_prefix = "L"
+  #   ) %>% 
+  #   pivot_longer(
+  #     cols = starts_with("L"),
+  #     names_to = "L",
+  #     values_to = "qnat_mean"
+  #   )
 }
+
+
 
 # mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
 #   # Starting time for the predictions
