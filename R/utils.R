@@ -128,7 +128,8 @@ preprocess_mlg <- function(df, ndays_thresh = 28) {
     select(date, qnat_obs)
   cyrs <- get_cyears(df_cmonth)
   df_cyrs <- df %>%
-    filter(lubridate::year(date) %in% cyrs)
+    filter(lubridate::year(date) %in% cyrs) %>% 
+    filter(!is.na(qnat))
 }
 
 #' Filtragem dos dados para utilização na função mprev_lt
@@ -481,24 +482,24 @@ meanlg <- function(df,year = 2016){
     values = "qnat",
     #start_year = "1969",
     end_year = year,
-    ignore_missing = FALSE
+    ignore_missing = TRUE
   )
   
-  # longterm_monthly_qnat["Month"] <- seq(1, 13)
-  # 
-  # longterm_monthly_qnat <- longterm_monthly_qnat %>%
-  #   slice(1:n() - 1) %>%
-  #   select(Month, Mean) %>%
-  #   pivot_wider(
-  #     names_from = Month,
-  #     values_from = Mean,
-  #     names_prefix = "L"
-  #   ) %>% 
-  #   pivot_longer(
-  #     cols = starts_with("L"),
-  #     names_to = "L",
-  #     values_to = "qnat_mean"
-  #   )
+  longterm_monthly_qnat["Month"] <- seq(1, 13)
+
+  longterm_monthly_qnat <- longterm_monthly_qnat %>%
+    slice(1:n() - 1) %>%
+    select(Month, Mean) %>%
+    pivot_wider(
+      names_from = Month,
+      values_from = Mean,
+      names_prefix = "L"
+    ) %>%
+    pivot_longer(
+      cols = starts_with("L"),
+      names_to = "L",
+      values_to = "qnat_mean"
+    )
 }
 
 
@@ -566,17 +567,6 @@ meanlg <- function(df,year = 2016){
 #     rename(qnat_prev = data) %>% 
 #     left_join(.,qnat_params)
 # }
-
-# Prepara dados para o uso da função psf_reprod no mprev_lt
-datprep_prevlt <- function(df) {
-  rows <- nrow(df)
-  rows.aux <- nrow(df) # número de linhas dos dados qnat_obs
-  while (rows.aux %% 12 != 0) {
-    rows.aux <- rows.aux - 1 # retorna linha que é divisível por 12
-  }
-  start_row <- (rows - rows.aux) + 1
-  return(df[start_row:(rows), ])
-}
 
 
 mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
