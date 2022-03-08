@@ -1,0 +1,403 @@
+---
+title: "PSF para diferentes horizontes de previsão"
+author: "Jerônimo Acker D'Ornellas"
+date: "17/01/2022"
+output: html_document
+---
+
+
+## Pré-requisitos
+
+Pacotes necessários:
+
+
+```{r, message=FALSE}
+if(!require(PSF)) install.packages("PSF")
+if(!require(timetk)) remotes::install_github("business-science/timetk")
+# tive que usar o tidyr do github
+# por causa de erro no unnest()
+#  Error: Input must be list of vectors
+# remotes::install_github("tidyverse/tidyr")
+pacotes <- c(
+  "here",
+  "usethis",
+  "data.table",
+  "HEobs",
+  "PSF",
+  "tidyverse",
+  "lubridate",
+  "fs",
+  "checkmate",
+  "xts",
+  "hydroGOF",
+  "ModelMetrics",
+  "forecast",
+  "timetk",
+  "fasstr",
+  "viridis"
+)
+# Carregar os pacotes
+easypackages::libraries(pacotes)
+```
+
+Scripts:
+
+```{r}
+source(here('R', 'load-data.R'))
+source(here('R', 'utils.R'))
+```
+
+
+### Dados de vazão
+
+Os dados importados de vazão devem ser regularmente espaçados no tempo. Esta adequação das séries diárias, se necessária, pode ser realizada com a função `complete_dates()` do pacote **`{lhmetools}`**. Assim assegura-se que todas estações possuam 1 observação por dia e sem datas faltantes.
+
+```{r}
+qnat_data <- qnat_dly_ons() %>%
+  select(date, qnat, code_stn) %>%
+  lhmetools::complete_dates(group = "code_stn")
+glimpse(qnat_data)
+```
+
+Os dados importados precisam filtrados para o posto de interesse: posto 74 da ONS (G. B. Munhoz).
+
+```{r}
+qnat_posto <- qnat_data %>% 
+  sel_station(.,station = 74)  
+glimpse(qnat_posto)
+```
+
+
+Observam-se dados faltantes na série do posto 74, então selecionaremos somente os meses com pelo menos 28 observações válidas e anos completos.
+
+```{r}
+qnat_posto_mly <- qnat_posto %>% 
+  apply_cmonth(.,ndays_thresh = 28)
+# check
+#str(qnat_posto_mly)
+# qnat_posto_mly %>% 
+#   lhmetools::complete_dates(group = "code_stn", time_step = # "month") %>%
+#   str()
+```
+
+Para robustez da avaliação consideraremos apenas anos que atendam ao critério de disponibilidade nos 12 meses do ano e verificamos se a série é múltipla de 12 como requisito da aplicação do PSF.
+
+```{r}
+# anos completos
+anos_comp <- get_cyears(qnat_posto_mly)
+
+# filtra observações com os anos completos
+qnat_posto_mly <- qnat_posto_mly %>% 
+  apply_cyears() %>% 
+  select(date,qnat_obs)
+
+# check
+head(qnat_posto_mly)
+tail(qnat_posto_mly)
+stopifnot(nrow(qnat_posto_mly) %% 12 == 0)
+#nrow(qnat_posto_mly) %/% 12
+```
+
+```{r}
+# Previsões para 2017 usando o algoritmo PSF L1~L12 
+qnatprev_lt74  <- mprev_lt(qnat_posto_mly, ini_mon = 1:12)
+# Dados para comparação 
+qnat_ltobs74 <- getl_mteste(qnat_posto_mly, ini_mon = 1:12)
+# Modelo de média a longo prazo L1~L12
+qnatlg_mean <- meanlg(qnat_posto)
+
+# Dados observados e previsões feitas com o PSF
+qnat_psf <- qnatprev_lt74 %>%
+  left_join(
+    .,
+    qnat_ltobs74,
+    by = "S"
+  )
+
+
+# PSF, Modelo de média a longo prazo e dados observados
+qnat_models74 <- tibble(qnat_psf,
+                      qnat_mean = list(qnatlg_mean))
+
+# Métrica KGE para comparação dos resultados do modelo de média e PSF
+qnat_kge74 <- qnat_models74 %>% 
+  mutate(
+    KGEmean = map2(
+      qnat_mean,
+      qnat_obs,
+      ~KGE(.x$qnat_mean,.y$qnat_obs)
+    ),
+    KGEpsf = map2(
+      qnatpsf_prev,
+      qnat_obs,
+      ~KGE(.x$qnatpsf_prev,.y$qnat_obs)
+    )
+    
+  )
+```
+
+CDF das previsões e observações.
+
+```{r}
+# dat_testeobs <- qnat_models74$qnat_obs[[1]]
+# dat_testepre <- qnat_models74$qnatpsf_prev[[1]]
+# #p0 <- ggplot(data = dat_teste, aes(x = qnat_obs))
+# Pobs <- ecdf(dat_testeobs$qnat_obs) 
+# Ppred <- ecdf(dat_testepre$qnatpsf_prev)
+# 
+# lol <- hist(dat_teste$qnat_obs)
+# 
+# 
+# dat_testeobs[,2][[1]][1]
+# 
+# crps_sample(y = dat_testeobs[,2][[1]][1],dat_testepre[,2][[1]])
+```
+
+
+
+
+Ampliando a análise para os demais postos utilizando apenas a previsão para o ano de 2017 (L1 ~ L12). O ano das observações de interesse devem ser selecionadas por meio das funções `getl_mteste`,`meanlg` e `mprev_lt`, estas funções são responsáveis por selecionar as observações, realizar as previsões modelo de média mensal a longo prazo e do modelo PSF.
+
+```{r}
+# Tratamento inicial dos dados 
+qnat_mly <- qnat_data %>% 
+  apply_cmonth(., ndays_thresh = 28) %>% 
+  group_by(code_stn) %>% 
+  nest() %>% 
+  mutate(
+    data = map(data, apply_cyears)
+  )
+
+# Seleção das observações 
+qnat_obs <- qnat_mly %>% 
+  mutate(
+    data = map(data,
+               ~getl_mteste(.x, ini_mon = 1:12))
+  ) %>% 
+  rename(qnat_obs = data)
+
+# Dados tratados para cálculo do modelo de média mensal a longo prazo
+qnatdat_mlg <- qnat_data %>% 
+  group_by(code_stn) %>% 
+  nest(data = c(date,qnat)) %>% 
+  mutate(
+    data = map(data,
+               ~preprocess_mlg(.x))
+  )
+
+# Previsões usadas para o modelo de média
+qnat_mean <- qnatdat_mlg %>% 
+  mutate(
+    mean_prev = map(data,
+               ~ meanlg(.x) %>% 
+                 nest(mean_prev = c(L,qnat_mean)))
+  
+  ) %>% 
+  select(code_stn,mean_prev)
+
+# qnatmly_psf<- qnat_mly %>% 
+#   mutate(
+#     data = map(data,
+#                ~mprev_lt(.x,ini_mon = 1:12))
+#   )
+  
+# saveRDS(qnatmly_psf,file = here('output', 'qnatmly_psf'))
+
+# Carrega previsões feitas com o PSF
+qnatmly_psf  <- readRDS(here("output", "qnatmly_psf"))
+```
+
+
+Os dados das observações e previsões devem ser agrupados para avaliação de acordo com o índice escolhido.
+
+```{r}
+# Previsões do modelo médio, PSF e observações 
+qnatobs_prev <- qnat_obs %>%
+  left_join(.,
+    qnatmly_psf,
+    by = "code_stn"
+  ) %>%
+  left_join(.,
+    qnat_mean,
+    by = "code_stn"
+  ) %>%
+  mutate(
+    qnatobs_prev = map2(
+      qnat_obs,
+      data,
+      ~ .x %>%
+        left_join(.,
+          .y,
+          by = "S"
+        )
+    ),
+    qnatobs_prev = map2(
+      qnatobs_prev,
+      mean_prev,
+      ~ .x %>%
+        cbind(.,
+          .y
+        ) %>% 
+        select(-c(k,w))
+    )
+  ) %>% 
+  select(code_stn,qnatobs_prev)
+```
+
+
+
+O desempenho das previsões do modelo de média mensal a longo prazo e do algoritmo PSF foi avaliado por meio do índice KGE.
+
+```{r}
+qnatobs_prevkge <- qnatobs_prev %>%
+  mutate(
+    KGE = map(
+      qnatobs_prev,
+      ~ .x %>%
+        mutate(
+          KGEpsf = map2(
+            qnatpsf_prev,
+            qnat_obs,
+            ~ KGE(.x$qnatpsf_prev, .y$qnat_obs)
+          ),
+          KGEmean = map2(
+            mean_prev,
+            qnat_obs,
+            ~ KGE(.x$qnat_mean, .y$qnat_obs)
+          )
+        ) %>% 
+        select(S,KGEpsf,KGEmean)
+    )
+  )
+```
+
+KGE médio das previsões em cada estação usando o PSF e o modelo de média mensal a longo prazo.
+
+```{r}
+avalkge <- qnatobs_prevkge %>%
+  select(code_stn, KGE) %>%
+  mutate(
+    KGE = map(
+      KGE,
+      ~ .x %>%
+        select(-S) %>%
+        mutate(across(everything(), ~ .x %>%
+          as.numeric())) %>%
+        summarise(across(where(is.numeric), mean),
+          .groups = "drop"
+        )
+    )
+  ) %>% 
+  unnest(KGE) %>% 
+  pivot_longer(
+    cols = -c(code_stn),
+    names_to = "metric",
+    values_to = "valor"
+  )
+```
+
+Visualização do KGE médio usando gráficos em barra. Como pode ser observado no gráfico, de maneira geral as previsões usando o algoritmo PSF foram superiores ao modelo de média a longo prazo.
+
+```{r}
+avalkge %>%
+ggplot(aes(x = code_stn, y = valor)) +
+  geom_col() + 
+  facet_wrap(~metric, scales = "free_y", nrow = data.table::uniqueN(avalkge$metric)) + 
+  theme_bw() +
+  theme(axis.text.x =)
+```
+
+
+```{r}
+# ref
+#https://stackoverflow.com/questions/54746351/diverging-bar-chart-add-text-labels-adjusting-depending-on-if-it-is-negative-o
+
+#https://stackoverflow.com/questions/64049550/overlapping-text-on-top-of-geom-bar-in-ggplot2
+
+avalkge %>%
+  ggplot(aes(x = code_stn, y = valor, fill = valor)) +
+  geom_col(
+    #color = code_stn,
+    width = 2.5,
+    position = position_dodge(width = 0.9)
+  ) +
+  scale_fill_viridis_c() +
+  geom_text(aes(label = code_stn),
+    color = "black",
+    position = position_dodge(1.5),
+    hjust = ifelse(avalkge$valor < 0, 1.5, -1.5),
+    size = 2.3
+  ) + 
+  facet_wrap(~metric,
+    scales = "free_y",
+    nrow = data.table::uniqueN(avalkge$metric)
+  ) +
+  coord_flip() +
+  scale_y_continuous(limits = c(-1,1)) +
+  theme(axis.text.x =)
+  theme_classic() 
+```
+
+
+Verificando o número de vezes no qual o algoritmo PSF obteve um desempenho superior em cada estação para os 12 modelos (L1 ~ L12).
+
+
+```{r}
+avalkge_est <- qnatobs_prevkge %>%
+  select(code_stn, KGE) %>%
+  mutate(
+    KGE = map(
+      KGE,
+      ~ .x %>%
+        select(-S) %>% 
+        mutate(across(everything(), ~ .x %>%
+          as.numeric())) %>%
+        summarise(nPSF = sum(KGEpsf > KGEmean))
+        
+    )
+  ) %>% 
+  unnest(cols = c(KGE))
+```
+
+O desempenho do algoritmo PSF foi inferior ao modelo médio a longo prazo apenas para as previsões das estações 149 e 209.
+
+
+```{r}
+avalkge_est %>% 
+  filter(nPSF < 6)
+```
+
+Avaliação da previsão de acordo com os índices da seção 2.3 do artigo "Bias adjustment and ensemble recalibration methods for seasonal 
+forecasting: a comprehensive intercomparison using the C3S dataset".
+
+
+```{r}
+#library(VALUE)
+
+aval_PSF <- qnatobs_prev %>% 
+  mutate(
+    r = map(qnatobs_prev,
+            ~ .x %>% 
+              mutate(
+                r = map2(qnatpsf_prev,
+                         qnat_obs,
+                         ~cor(
+                           .x$qnatpsf_prev,
+                           .y$qnat_obs,
+                           method = "pearson"
+                         )),
+                MAE =  map2(qnatpsf_prev,
+                         qnat_obs,
+                         ~mae(
+                           .y$qnat_obs,
+                           .x$qnatpsf_prev
+                         ))
+              ) %>% 
+              select(-mean_prev))
+  )
+```
+
+
+
+
+
