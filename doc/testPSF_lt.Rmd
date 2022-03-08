@@ -145,7 +145,7 @@ CDF das previsões e observações.
 # Pobs <- ecdf(dat_testeobs$qnat_obs) 
 # Ppred <- ecdf(dat_testepre$qnatpsf_prev)
 # 
-# lol <- hist(dat_teste$qnat_obs)
+# histobs <- hist(dat_teste$qnat_obs)
 # 
 # 
 # dat_testeobs[,2][[1]][1]
@@ -154,9 +154,7 @@ CDF das previsões e observações.
 ```
 
 
-
-
-Ampliando a análise para os demais postos utilizando apenas a previsão para o ano de 2017 (L1 ~ L12). O ano das observações de interesse devem ser selecionadas por meio das funções `getl_mteste`,`meanlg` e `mprev_lt`, estas funções são responsáveis por selecionar as observações, realizar as previsões modelo de média mensal a longo prazo e do modelo PSF.
+Ampliando a análise para os demais postos utilizando apenas a previsão para o ano de 2017 (L1 ~ L12). O ano das observações de interesse devem ser selecionadas por meio da função `getl_mteste`. As funções `meanlg` e `mprev_lt`, são responsáveis por  realizar as previsões modelo de média mensal a longo prazo e do algoritmo PSF.
 
 ```{r}
 # Tratamento inicial dos dados 
