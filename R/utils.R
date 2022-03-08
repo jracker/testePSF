@@ -105,7 +105,7 @@ apply_cyears <- function(df) {
 }
 
 
-#' Filtragem dos dados com meses e anos completos para uso no modelo de médias
+#' Filtragem dos dados com meses e anos completos para uso no modelo de média a longo prazo
 #'  
 #' Usar depois de agrupar os dados caso selecionado mais de um posto
 #'  
@@ -134,7 +134,7 @@ preprocess_mlg <- function(df, ndays_thresh = 28) {
 
 #' Filtragem dos dados para utilização na função mprev_lt
 #'  
-#' Caso o número de linhas não é divisível por 12, retira a primeira linha e 
+#' Caso o número de linhas não for divisível por 12, retira a primeira linha e 
 #' assim por diante
 #' 
 #'  @param df um tibble ou data frame
@@ -363,11 +363,11 @@ get_mpred <- function(lista) {
 }
 
 #' Seleciona os parâmetros k e w dos objetos de classe psf gerados na validação
-#' cruzada 
+#' cruzada ou no modelo de previsão para diferentes horizontes de previsão
 #' 
 #' @param model objeto de classe psf com informações do modelo
 #' 
-#' @return vetor de inteiros com os parâmetros k e w
+#' @return vetor de inteiros ou um tibble com os parâmetros k e w 
 #' 
 #' @export
 #'
@@ -378,13 +378,6 @@ get_cvpar <- function(model, lt = FALSE) {
   if (lt) return(tibble(k = unl_model$k, w = unl_model$w)) 
   params_psf <- c(k = unl_model$k, w = unl_model$w)
 }
-
-# get_cvpar <- function(model) {
-#   unl_model <- unlist(model, recursive = FALSE)
-#   params_psf <- c(k = unl_model$k, w = unl_model$w)
-# }
-
-
 
 
 #' Aplica o PSF utilizando os parâmetros selecionados na validação cruzada
@@ -412,68 +405,15 @@ psf_cvparam <- function(df, n = 12, params = NULL) {
 }
 
 
-# psfr_lt <- function(df, n = 24, predict = TRUE, model = FALSE) {
-#   set.seed(1) # p/ reprodutibilidade
-#   model <- psf(df[, "qnat_obs"], cycle = 1)
-#   preds <- predict(model, n.ahead = n)
-#   
-#   # Retorna apenas a previsão para o horizonte de previsão n
-#   if (predict) return(preds[length(preds)]) 
-#   # Retorna o modelo contendo os parâmetros k e w
-#   model
-# }
-
-
-# getl_mtrain <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017){
-#   # Starting time for the predictions
-#   ref_dates <- as.Date(paste0(yr_ref, "-", ini_mon, "-1")) %>%
-#     as_tibble() %>%
-#     rename(S = value)
-#   # Return tibble with the starting date and the filtered data (using S)
-#   qnat_ref <- tibble(ref_dates, data = list(dat)) %>%
-#     mutate(
-#       data = map2(data, S, ~ filter(..1, date <= ..2))
-#       # L1 = map(
-#       #   dados_filtrados,
-#       #   ~ psf_reprod(.x, n = 1, predict = TRUE)
-#       # )
-#     )
-# }
-
-
-# Modelo de previsões médias
-# meanlg <- function(df,year = 2016){
-#   
-#   longterm_monthly_qnat <- calc_longterm_monthly_stats(
-#     data = df,
-#     dates = "date",
-#     values = "qnat",
-#     start_year = "1969",
-#     end_year = year
-#   )
-#   
-#   longterm_monthly_qnat["Month"] <- seq(1, 13)
-#   
-#   longterm_monthly_qnat <- longterm_monthly_qnat %>%
-#     slice(1:n() - 1) %>%
-#     select(Month, Mean) %>%
-#     pivot_wider(
-#       names_from = Month,
-#       values_from = Mean,
-#       names_prefix = "L"
-#     ) %>% 
-#     pivot_longer(
-#       cols = starts_with("L"),
-#       names_to = "L",
-#       values_to = "qnat_mean"
-#     )
-#   
-#   
-#   
-#   
-# 
-# }
-
+#' Previsões utilizando o modelo de média a longo prazo
+#'
+#' @param dat um tibble ou data frame com dados de vazão mensal
+#'
+#' @param year último ano para realizar a análise
+#' 
+#' @return um data frame com as previsões de vazão mensal  a partir de
+#' cada mês inicial e para um número de meses à frente (L1~L12)
+#' 
 meanlg <- function(df,year = 2016){
   
   longterm_monthly_qnat <- calc_longterm_monthly_stats(
@@ -503,71 +443,20 @@ meanlg <- function(df,year = 2016){
 }
 
 
-
-# mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
-#   # Starting time for the predictions
-#   ref_dates <- as.Date(paste0(yr_ref, "-", ini_mon, "-1")) %>%
-#     as_tibble() %>%
-#     rename(S = value)
-#   # Return tibble with the starting date and the filtered data (using S)
-#   qnat_ref <- tibble(ref_dates, data = list(dat)) %>%
-#     mutate(
-#       data = map2(data, S, ~ filter(..1, date <= ..2))
-#       # L1 = map(
-#       #   dados_filtrados,
-#       #   ~ psf_reprod(.x, n = 1, predict = TRUE)
-#       # )
-#     )
-#   
-#   util_lt <- tibble(lead_time = 1:nmonths) %>%
-#     pivot_wider(
-#       names_from = lead_time,
-#       values_from = lead_time,
-#       names_prefix = "L"
-#     )
-#   
-#   qnat_lt <- cbind(qnat_ref, util_lt)
-#   
-#   qnat_model <- qnat_lt %>% 
-#     mutate(across(-c(data,S),
-#                   ~ map2(.x,
-#                          data,
-#                          ~ psf_reprod_teste(.y, 
-#                                             n = .x, 
-#                                             predict = FALSE))))
-#   
-#   qnat_params <- qnat_model %>% 
-#     mutate(across(-c(data,S),
-#                   ~ map(.x,
-#                         ~ get_cvpar(.))))
-#   
-#   vars_lt <- names(qnat_params)[3:14]
-#   for (i in vars_lt){
-#     qnat_params  <- qnat_params %>% 
-#       unnest_wider(i, names_sep = "_")
-#   }  
-#   
-#   
-#   qnat_params <- qnat_params %>%
-#     rowwise() %>% 
-#     mutate(
-#       k =  moda(c_across(ends_with("k"))), 
-#       w = moda(c_across(ends_with("w")))
-#     ) %>% 
-#     select(S,k,w)
-#   
-#   qnat_mprev <- qnat_lt %>% 
-#     mutate(across(-c(data,S),
-#                   ~ map2_dbl(.x,
-#                              data,
-#                              ~ psf_reprod_teste(.y, n = .x)))) %>% 
-#     select(-data) %>% 
-#     group_by(S) %>% 
-#     nest() %>% 
-#     rename(qnat_prev = data) %>% 
-#     left_join(.,qnat_params)
-# }
-
+#' Previsões utilizando o algoritmo PSF para diferentes lead times
+#'
+#' @param dat um tibble ou data frame com dados de vazão mensal
+#'
+#' @param ini_mon um inteiro correspondendo aos meses iniciais 
+#'
+#' @param nmonths um inteiro relativo ao número de meses de observações 
+#' selecionados para previsão a partir dos meses iniciais
+#' 
+#' @param yr_ref ano o qual se deseja realizar as previsões 
+#' 
+#' @return um data frame com as previsões de vazão mensal  a partir de
+#' cada mês inicial e para um número de meses à frente (L1~L12)
+#' 
 
 mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
   # Starting time for the predictions
@@ -643,6 +532,22 @@ mprev_lt <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
     )
 }
 
+
+#' Filtra os dados de teste para o período de interesse para avaliação de um 
+#' modelo de previsão utilizando diferentes horizontes de previsão.
+#'
+#' @param dat um tibble ou data frame com dados de vazão mensal
+#'
+#' @param ini_mon um inteiro correspondendo aos meses iniciais 
+#'
+#' @param nmonths um inteiro relativo ao número de meses de observações 
+#' selecionadas a partir dos meses iniciais
+#' 
+#' @param yr_ref ano o qual se deseja selecionar os dados de teste
+#' 
+#' @return um data frame com os dados de vazão mensal selecionados a partir de
+#' cada mês inicial e para um número de meses à frente 
+#' 
 getl_mteste <- function(dat, ini_mon, nmonths = 12, yr_ref = 2017) {
   # Starting time for the predictions
   ref_dates <- as.Date(paste0(yr_ref, "-", ini_mon, "-1")) %>%
